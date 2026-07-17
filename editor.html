@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>关卡编辑器 — 虫子大作战</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:#1a1a2e;color:#e0e0e0;font-family:'Microsoft YaHei',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* 顶部工具栏 */
+#toolbar{display:flex;align-items:center;gap:12px;padding:8px 16px;background:#16213e;border-bottom:1px solid #0f3460;min-height:44px}
+#toolbar button,#toolbar select{padding:6px 14px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;border-radius:4px;cursor:pointer;font-size:13px}
+#toolbar button:hover{background:#1a508b}
+#toolbar button.active{background:#e94560;border-color:#e94560}
+#toolbar label{font-size:12px;color:#888}
+
+/* 主体三栏 */
+#main{display:flex;flex:1;overflow:hidden}
+
+/* 左侧面板 */
+#leftPanel{width:160px;background:#16213e;border-right:1px solid #0f3460;padding:8px;overflow-y:auto}
+#leftPanel h3{font-size:12px;color:#888;margin:6px 0;text-transform:uppercase;letter-spacing:1px}
+.tool-item{display:flex;align-items:center;gap:6px;padding:6px 8px;margin:2px 0;border:1px solid transparent;border-radius:4px;cursor:pointer;font-size:12px}
+.tool-item:hover{background:#0f3460}
+.tool-item.selected{border-color:#e94560;background:rgba(233,69,96,.15)}
+.tool-icon{width:20px;height:20px;border-radius:2px;flex-shrink:0}
+
+/* 中央画布 */
+#canvasWrap{flex:1;overflow:hidden;background:#1a1a2e;position:relative}
+#editorCanvas{display:block;image-rendering:pixelated}
+canvas#gridCanvas{position:absolute;top:0;left:0}
+
+/* 右键面板 */
+#rightPanel{width:280px;background:#16213e;border-left:1px solid #0f3460;display:flex;flex-direction:column}
+#rightPanel h3{font-size:13px;color:#ccc;margin-bottom:8px}
+#rightPanel label{font-size:11px;color:#888;margin:4px 0 2px}
+#rightPanel input[type=number]{width:100%;padding:4px 8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #0f3460;border-radius:3px;font-size:12px}
+#rightPanel input[type=range]{width:100%;margin:2px 0}
+#rightPanel button{width:100%;padding:6px;margin:4px 0;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;border-radius:4px;cursor:pointer;font-size:12px}
+#rightPanel button:hover{background:#1a508b}
+#rightPanel button.danger{background:#c0392b;border-color:#e74c3c}
+#rightPanel button.danger:hover{background:#e74c3c}
+.prop-row{display:flex;gap:4px}
+.prop-row input{flex:1}
+
+/* Tab 切换 */
+#tabBar{display:flex;border-bottom:1px solid #0f3460;flex-shrink:0}
+.tab-btn{flex:1;padding:8px 4px;background:transparent;color:#888;border:none;cursor:pointer;font-size:12px;text-align:center;border-bottom:2px solid transparent;transition:all 0.15s}
+.tab-btn:hover{color:#ccc;background:rgba(255,255,255,0.03)}
+.tab-btn.active{color:#e0e0e0;border-bottom-color:#e94560}
+#tabContent{flex:1;overflow-y:auto;padding:10px}
+#tabContent h4{font-size:11px;color:#e94560;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(233,69,96,0.2)}
+#tabContent h4:first-child{margin-top:0}
+#tabContent .cfg-row{display:flex;align-items:center;gap:6px;margin:2px 0}
+#tabContent .cfg-row .cfg-label{flex:0 0 70px;font-size:11px;color:#aaa;text-align:right}
+#tabContent .cfg-row input[type=range]{flex:1;margin:0;height:4px}
+#tabContent .cfg-row .cfg-val{flex:0 0 36px;font-size:11px;color:#e94560;text-align:left;font-weight:bold}
+#tabContent .cfg-group{margin-bottom:4px}
+
+/* 按键映射 */
+.key-bind{display:flex;align-items:center;gap:6px;margin:3px 0}
+.key-bind-label{flex:0 0 70px;font-size:11px;color:#aaa;text-align:right}
+.key-bind-box{flex:1;padding:4px 8px;background:#1a1a2e;border:1px solid #0f3460;border-radius:3px;font-size:11px;color:#ccc;cursor:pointer;text-align:center;min-height:24px}
+.key-bind-box:hover{border-color:#e94560}
+.key-bind-box.recording{background:#3d1010;border-color:#e94560;color:#e94560;animation:blink 0.6s infinite}
+@keyframes blink{50%{opacity:0.5}}
+
+/* 状态栏 */
+#statusBar{display:flex;gap:20px;padding:4px 16px;background:#16213e;border-top:1px solid #0f3460;font-size:11px;color:#666;min-height:22px}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <select id="selTool">
+    <option value="select">选择 / 移动 (S)</option>
+    <option value="platform">平台</option>
+    <option value="food">食物 (+10)</option>
+    <option value="shoe">皮鞋</option>
+    <option value="spray">蟑螂药</option>
+    <option value="pushable">可推动物</option>
+    <option value="destructible">可破坏物</option>
+    <option value="pressure">压力板</option>
+    <option value="wormhole">洞口（成对传送）</option>
+    <option value="levelexit">传送点（跳下一关）</option>
+    <option value="bgitem">背景物品（无碰撞）</option>
+  </select>
+  <label>网格: <input type="checkbox" id="chkGrid" checked></label>
+  <label>吸附: <input type="checkbox" id="chkSnap" checked></label>
+  <label>吸附大小: <input type="number" id="snapSize" value="16" min="4" max="64" style="width:50px"></label>
+  <button id="btnNew" style="background:#555;border-color:#666">新建空白关卡</button>
+  <button id="btnExport">导出 JSON</button>
+  <button id="btnImport">导入 JSON</button>
+  <button id="btnSave">保存为关卡文件</button>
+  <button id="btnTest" style="background:#27ae60;border-color:#2ecc71">在游戏中测试</button>
+</div>
+
+<div id="main">
+  <div id="leftPanel">
+    <h3>关卡对象</h3>
+    <div class="tool-item" data-tool="nest">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>巢穴（出生点）</span>
+    </div>
+    <div class="tool-item" data-tool="fridge">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>冰箱（目标）</span>
+    </div>
+    <div class="tool-item" data-tool="platform">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>平台</span>
+    </div>
+    <div class="tool-item" data-tool="food">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>食物 (+10)</span>
+    </div>
+    <div class="tool-item" data-tool="shoe">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>皮鞋（敌人）</span>
+    </div>
+    <div class="tool-item" data-tool="spray">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>蟑螂药</span>
+    </div>
+    <div class="tool-item" data-tool="pushable">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>可推动物</span>
+    </div>
+    <div class="tool-item" data-tool="destructible">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>可破坏物</span>
+    </div>
+    <div class="tool-item" data-tool="pressure">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>压力板</span>
+    </div>
+    <div class="tool-item" data-tool="wormhole">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>洞口（成对传送）</span>
+    </div>
+    <div class="tool-item" data-tool="levelexit">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>传送点（跳下一关）</span>
+    </div>
+    <div class="tool-item" data-tool="bgitem">
+      <canvas class="tool-icon" width="20" height="20"></canvas>
+      <span>背景物品（无碰撞）</span>
+    </div>
+
+    <h3>快捷键</h3>
+    <p style="font-size:10px;color:#666;line-height:1.6">
+      S=选择 W=平台 F=食物<br>
+      H=皮鞋 P=蟑螂药<br>
+      B=推动物 D=可破坏<br>
+      Delete=删除选中<br>
+      Ctrl+C / Ctrl+V=复制粘贴<br>
+      Ctrl+Z=撤销
+    </p>
+  </div>
+
+  <div id="canvasWrap">
+    <canvas id="gridCanvas"></canvas>
+  </div>
+
+  <div id="rightPanel">
+    <div id="tabBar">
+      <button class="tab-btn active" data-tab="prop">物体属性</button>
+      <button class="tab-btn" data-tab="config">全局参数</button>
+    </div>
+    <div id="tabContent">
+      <div id="tabProp">
+        <h3 id="propTitle" style="margin:0 0 8px">未选中物体</h3>
+        <div id="propContent">
+          <p style="font-size:11px;color:#666">点击画布上的物体查看/编辑属性，或在左侧选择工具后点击画布放置新物体。</p>
+        </div>
+        <hr style="border-color:#0f3460;margin:10px 0">
+        <div id="propActions" style="display:none">
+          <button id="btnDelete" class="danger">删除选中物体</button>
+          <button id="btnDuplicate">复制选中物体</button>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <button id="btnLayerUp" style="flex:1" title="上移一层">上移</button>
+            <button id="btnLayerDown" style="flex:1" title="下移一层">下移</button>
+          </div>
+        </div>
+      </div>
+      <div id="tabConfig" style="display:none">
+        <!-- 全局参数由 JS 动态生成 -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="statusBar">
+  <span id="stMouse">鼠标: --</span>
+  <span id="stObjCount">物体数: 0</span>
+  <span id="stLevelSize">关卡: 960×540 (16:9)</span>
+</div>
+
+<script>
+/* ================================================================
+   编辑器核心
+   ================================================================ */
+const LW=960, LH=540;
+
+// 工具默认尺寸（所有物体默认角度为0）
+const DEFAULTS = {
+  platform:    {w:120,h:12,angle:0},
+  food:        {w:12,h:12,angle:0},
+  shoe:        {w:48,h:32,angle:0,patrolL:0,patrolR:200},
+  spray:       {w:20,h:20,angle:0,radius:120},
+  pushable:    {w:32,h:32,angle:0},
+  destructible:{w:32,h:32,angle:0},
+  pressure:    {w:48,h:12,angle:0},
+  nest:        {w:40,h:40,angle:0},
+  fridge:      {w:56,h:80,angle:0},
+  wormhole:    {w:32,h:40,angle:0,pairId:''},
+  levelexit:   {w:80,h:60,angle:0},
+  bgitem:      {w:64,h:64,angle:0},
+};
+
+// ===== 状态 =====
+let objects = [];            // 当前关卡所有物体 [{type,x,y,w,h,angle,...props}]
+let selectedIdx = -1;       // 选中的物体索引
+let currentTool = 'select';
+let showGrid = true;
+let snapOn = true;
+let snapSz = 16;
+let mouseX=0, mouseY=0;
+let mouseDown=false;
+let dragMode='';            // '' | 'move' | 'resize' | 'rotate' | 'place'
+let resizeHandle='';        // nw/n/ne/e/se/s/sw/w
+let dragStart={x:0,y:0};
+let dragOrig={};            // 拖拽开始时的物体状态快照（x,y,w,h,angle）
+let undoStack=[], redoStack=[];
+let clipboard = null;
+let editorBgImgSrc = '';  // 全局背景图 data URL
+
+// 物体 ID 计数器（为每个物体生成唯一 ID，用于压力板效果引用）
+let objIdCounter = 0;
+function nextObjId(type){ return type+'_'+ (objIdCounter++); }
+
+// 获取所有可被引用的物体列表（用于压力板目标下拉）
+function getAllTargetableObjects(){
+  return objects.filter(o=>['platform','destructible','pushable','shoe','food','spray','nest','fridge'].includes(o.type));
+}
+
+// 颜色映射（与主游戏渲染一致）
+const COLORS = {
+  platform:'#5D4037',  food:'#4CAF50', shoe:'#4E342E',
+  spray:'#C62828',     pushable:'#757575', destructible:'#8D6E63',
+  pressure:'#616161',  nest:'#3E2723', fridge:'#ECEFF1',
+  bgitem:'#a0a0a0',
+};
+// 编辑器边框颜色（高亮区分不同类型）
+const BORDER_COLORS = {
+  platform:'#BCAAA4',  food:'#69F0AE', shoe:'#A1887F',
+  spray:'#FF5252',     pushable:'#E0E0E0', destructible:'#D7CCC8',
+  pressure:'#BDBDBD',  nest:'#8D6E63', fridge:'#B0BEC5',
+  bgitem:'#EEEEEE',    wormhole:'#00E5FF', levelexit:'#69F0AE',
+};
+
+// ===== 初始化编辑器画布 =====
+const gridCvs = document.getElementById('gridCanvas');
+const gctx = gridCvs.getContext('2d');
+
+// 每次打开编辑器都从空白关卡开始（无任何预设物体）
+function loadDefaultLevel(){
+  objects = [];
+  objIdCounter = 0;
+  editorBgImgSrc = '';
+  resetCanvas();
+}
+
+function addObj(type, x, y, w, h, extra={}){
+  const def = DEFAULTS[type]||{};
+  const obj = {type, x, y, w, h, angle: extra.angle!=null?extra.angle:(def.angle||0), ...extra};
+  // 如果传入了 _id 则用传入的，否则自动生成
+  if(!obj._id) obj._id = nextObjId(type);
+  // 某些独有物体类型处理
+  if(type==='nest' || type==='fridge'){
+    // 确保每种只有一个找到并移除之前的
+    for(let i=objects.length-1;i>=0;i--){
+      if(objects[i].type===type) objects.splice(i,1);
+    }
+  }
+  objects.push(obj);
+}
+
+function resetCanvas(){
+  gridCvs.width = LW; gridCvs.height = LH;
+  gridCvs.style.width = LW+'px'; gridCvs.style.height = LH+'px';
+  render();
+}
+
+// ===== 渲染 =====
+function render(){
+  gctx.clearRect(0,0,LW,LH);
+
+  // 背景图（如果已导入）
+  if(editorBgImgSrc){
+    if(!render._bgImg){
+      render._bgImg = new Image();
+      render._bgImg.onload = function(){ render(); }; // 图片加载完成后自动重绘
+    }
+    if(render._bgImg.src !== editorBgImgSrc) render._bgImg.src = editorBgImgSrc;
+    if(render._bgImg.complete && render._bgImg.naturalWidth){
+      // cover 模式：保持原比例，铺满画布，多余部分裁剪
+      const imgW = render._bgImg.naturalWidth;
+      const imgH = render._bgImg.naturalHeight;
+      const scale = Math.max(LW / imgW, LH / imgH);
+      const drawW = imgW * scale;
+      const drawH = imgH * scale;
+      const dx = (LW - drawW) / 2;
+      const dy = (LH - drawH) / 2;
+      gctx.globalAlpha = 0.5;
+      gctx.drawImage(render._bgImg, dx, dy, drawW, drawH);
+      gctx.globalAlpha = 1;
+    }
+  }
+
+  // 背景底色（半透明覆盖，保证网格可见）
+  gctx.fillStyle = 'rgba(38,50,56,0.7)'; gctx.fillRect(0,0,LW,LH);
+
+  // 网格
+  if(showGrid){
+    gctx.strokeStyle = 'rgba(255,255,255,0.04)'; gctx.lineWidth=0.5;
+    for(let x=0;x<=LW;x+=snapSz){ gctx.beginPath();gctx.moveTo(x,0);gctx.lineTo(x,LH);gctx.stroke(); }
+    for(let y=0;y<=LH;y+=snapSz){ gctx.beginPath();gctx.moveTo(0,y);gctx.lineTo(LW,y);gctx.stroke(); }
+    gctx.strokeStyle = 'rgba(255,255,255,0.08)'; gctx.lineWidth=1;
+    for(let x=0;x<=LW;x+=64){ gctx.beginPath();gctx.moveTo(x,0);gctx.lineTo(x,LH);gctx.stroke(); }
+    for(let y=0;y<=LH;y+=64){ gctx.beginPath();gctx.moveTo(0,y);gctx.lineTo(LW,y);gctx.stroke(); }
+  }
+
+  // 物体（按顺序渲染，后面的在上层）
+  objects.forEach((o,i)=>{
+    const cx = o.x + o.w/2, cy = o.y + o.h/2;
+    const ang = (o.angle||0) * Math.PI / 180;
+
+    gctx.save();
+    // 旋转：以物体中心为原点
+    if(ang !== 0){
+      gctx.translate(cx, cy);
+      gctx.rotate(ang);
+      gctx.translate(-cx, -cy);
+    }
+
+    let color = COLORS[o.type]||'#888';
+    let alpha = 0.85;
+
+    // 选中高亮
+    if(i===selectedIdx){ color='#e94560'; alpha=0.5; }
+
+    gctx.fillStyle = color;
+    gctx.globalAlpha = alpha;
+    gctx.fillRect(o.x, o.y, o.w, o.h);
+
+    // 绘制对象自定义素材图片（保持比例，居中显示）
+    if(o.imgSrc){
+      if(!render._objImages) render._objImages = {};
+      if(!render._objImages[o.imgSrc]){
+        const img = new Image();
+        img.onload = function(){ render(); };
+        img.src = o.imgSrc;
+        render._objImages[o.imgSrc] = img;
+      }
+      const img = render._objImages[o.imgSrc];
+      if(img && img.complete && img.naturalWidth){
+        const scale = Math.min(o.w / img.naturalWidth, o.h / img.naturalHeight);
+        const drawW = img.naturalWidth * scale;
+        const drawH = img.naturalHeight * scale;
+        const dx = o.x + (o.w - drawW) / 2;
+        const dy = o.y + (o.h - drawH) / 2;
+        gctx.globalAlpha = 1;
+        gctx.drawImage(img, dx, dy, drawW, drawH);
+      }
+    }
+
+    // 特殊物体渲染
+    if(o.type==='food'){
+      gctx.fillStyle='#81C784'; gctx.globalAlpha=alpha;
+      gctx.beginPath(); gctx.arc(o.x+6,o.y+6,5,0,Math.PI*2); gctx.fill();
+    } else if(o.type==='spray'){
+      gctx.strokeStyle='rgba(255,50,50,0.3)'; gctx.lineWidth=1;
+      gctx.beginPath(); gctx.arc(cx, cy, o.radius||120, 0, Math.PI*2); gctx.stroke();
+    } else if(o.type==='nest'){
+      gctx.fillStyle='#5D4037'; gctx.beginPath();
+      gctx.ellipse(cx, cy, o.w/2, o.h/2, 0,0,Math.PI*2); gctx.fill();
+    } else if(o.type==='fridge'){
+      gctx.fillStyle='#ECEFF1'; gctx.fillRect(o.x,o.y,o.w,o.h);
+      gctx.fillStyle='#78909C'; gctx.fillRect(o.x+o.w-10, o.y+o.h*0.3, 6, 20);
+    } else if(o.type==='wormhole'){
+      // 洞口：旋转光圈
+      const t = performance.now()/500;
+      const r = Math.max(o.w,o.h)/2 + Math.sin(t)*3;
+      const grad = gctx.createRadialGradient(cx,cy,2, cx, cy, r);
+      grad.addColorStop(0,'#00E5FF'); grad.addColorStop(0.6,'#0088FF'); grad.addColorStop(1,'rgba(0,50,255,0)');
+      gctx.fillStyle = grad;
+      gctx.beginPath(); gctx.arc(cx, cy, r, 0, Math.PI*2); gctx.fill();
+      gctx.fillStyle='rgba(0,200,255,0.5)'; gctx.font='9px monospace'; gctx.textAlign='center';
+      gctx.fillText(o.pairId||'?', cx, cy-8);
+    } else if(o.type==='levelexit'){
+      // 传送点：有图片时不画默认绿色背景
+      if(!o.imgSrc){
+        gctx.fillStyle='rgba(0,255,100,0.18)'; gctx.fillRect(o.x,o.y,o.w,o.h);
+      }
+      gctx.strokeStyle='rgba(0,255,100,0.5)'; gctx.lineWidth=1; gctx.setLineDash([6,4]);
+      gctx.strokeRect(o.x+2,o.y+2,o.w-4,o.h-4); gctx.setLineDash([]);
+      gctx.fillStyle='rgba(0,255,100,0.7)'; gctx.font='10px monospace'; gctx.textAlign='center';
+      gctx.fillText('EXIT', cx, cy+4);
+    } else if(o.type==='bgitem'){
+      // 背景物品：有图片时不画默认灰色背景
+      if(!o.imgSrc){
+        gctx.globalAlpha = 0.5;
+        gctx.fillStyle = COLORS.bgitem||'#a0a0a0'; gctx.fillRect(o.x,o.y,o.w,o.h);
+        gctx.globalAlpha = 0.7;
+      }
+      gctx.strokeStyle='rgba(255,255,255,0.3)'; gctx.lineWidth=1; gctx.setLineDash([4,4]);
+      gctx.strokeRect(o.x+2,o.y+2,o.w-4,o.h-4); gctx.setLineDash([]);
+      gctx.fillStyle='rgba(255,255,255,0.5)'; gctx.font='10px monospace'; gctx.textAlign='center';
+      gctx.fillText('背景', cx, cy+4);
+    }
+    // 皮鞋关键帧路径可视化
+    if(o.type==='shoe' && o.keyframes && o.keyframes.length >= 2){
+      gctx.globalAlpha = 0.6;
+      gctx.strokeStyle = '#FFEB3B'; gctx.lineWidth = 1.5; gctx.setLineDash([5,3]);
+      gctx.beginPath();
+      gctx.moveTo(o.keyframes[0].x + o.w/2, o.keyframes[0].y + o.h/2);
+      for(let k=1; k<o.keyframes.length; k++){
+        gctx.lineTo(o.keyframes[k].x + o.w/2, o.keyframes[k].y + o.h/2);
+      }
+      gctx.lineTo(o.keyframes[0].x + o.w/2, o.keyframes[0].y + o.h/2); // 闭合循环
+      gctx.stroke();
+      gctx.setLineDash([]);
+      // 画关键帧点
+      for(let k=0; k<o.keyframes.length; k++){
+        const kf = o.keyframes[k];
+        gctx.fillStyle = '#FFEB3B';
+        gctx.beginPath(); gctx.arc(kf.x + o.w/2, kf.y + o.h/2, 4, 0, Math.PI*2); gctx.fill();
+        gctx.fillStyle = '#FFF'; gctx.font = '8px monospace'; gctx.textAlign = 'center';
+        gctx.fillText(''+k, kf.x + o.w/2, kf.y + o.h/2 - 6);
+      }
+    }
+    gctx.globalAlpha = 1;
+
+    // 边框（不同类型不同颜色，选中高亮）
+    if(i===selectedIdx){
+      gctx.strokeStyle = '#e94560';
+      gctx.lineWidth = 2;
+      gctx.shadowColor = '#e94560';
+      gctx.shadowBlur = 6;
+    } else {
+      gctx.strokeStyle = BORDER_COLORS[o.type] || 'rgba(255,255,255,0.35)';
+      gctx.lineWidth = 1.5;
+      gctx.shadowBlur = 0;
+    }
+    gctx.strokeRect(o.x, o.y, o.w, o.h);
+    gctx.shadowBlur = 0; // 重置阴影
+
+    // 类型标签 + 角度
+    gctx.fillStyle = 'rgba(255,255,255,0.6)'; gctx.font = '9px monospace';
+    let label = o.type;
+    if(o.angle) label += ' '+o.angle+'°';
+    gctx.fillText(label, o.x+2, o.y-2);
+
+    gctx.restore();
+
+    // 选中时的旋转手柄（在 restore 外面画，不受旋转影响）
+    if(i===selectedIdx){
+      drawRotateHandle(cx, cy, o.y);
+    }
+  });
+
+  // 选中时画 resize handles（在最外层，不受旋转影响）
+  if(selectedIdx>=0 && selectedIdx<objects.length){
+    drawResizeHandles(objects[selectedIdx]);
+  }
+
+  // 玩家出生点（如果有巢穴）
+  const nestObj = objects.find(o=>o.type==='nest');
+  if(nestObj){
+    gctx.strokeStyle='#4CAF50'; gctx.lineWidth=1; gctx.setLineDash([4,4]);
+    gctx.strokeRect(nestObj.x+8, nestObj.y-30, 24, 20);
+    gctx.setLineDash([]);
+    gctx.fillStyle='#4CAF50'; gctx.font='10px monospace';
+    gctx.fillText('玩家出生', nestObj.x, nestObj.y-34);
+  }
+
+  // 压力板 → 目标连线
+  for(const o of objects){
+    if(o.type!=='pressure' || !o.effects || o.effects.length===0) continue;
+    const pcx = o.x + o.w/2, pcy = o.y + o.h/2;
+    for(const eff of o.effects){
+      if(!eff.targetId) continue;
+      const tgt = objects.find(t=>t._id===eff.targetId);
+      if(!tgt) continue;
+      const tcx = tgt.x + tgt.w/2, tcy = tgt.y + tgt.h/2;
+      const isSel = selectedIdx>=0 && objects[selectedIdx].type==='pressure';
+
+      gctx.strokeStyle = isSel ? 'rgba(233,69,96,0.8)' : 'rgba(233,69,96,0.25)';
+      gctx.lineWidth = isSel ? 2 : 1;
+      gctx.setLineDash([6,4]);
+      gctx.beginPath(); gctx.moveTo(pcx, pcy); gctx.lineTo(tcx, tcy); gctx.stroke();
+      gctx.setLineDash([]);
+
+      // 效果标签
+      const midX = (pcx+tcx)/2, midY = (pcy+tcy)/2;
+      const labels = {move:'移动',scale:'缩放',rotate:'旋转',disappear:'消失',appear:'出现'};
+      gctx.fillStyle = isSel ? 'rgba(233,69,96,0.9)' : 'rgba(233,69,96,0.35)';
+      gctx.font = '9px monospace';
+      gctx.fillText(labels[eff.effect]||eff.effect, midX-12, midY-4);
+    }
+  }
+
+  updateStatus();
+}
+
+function drawResizeHandles(o){
+  const h=6, hs=h/2;
+  const handles=[
+    {x:o.x-hs,   y:o.y-hs,   c:'nw'},{x:o.x+o.w/2-hs,y:o.y-hs,c:'n'},
+    {x:o.x+o.w-hs,y:o.y-hs,  c:'ne'},{x:o.x+o.w-hs,y:o.y+o.h/2-hs,c:'e'},
+    {x:o.x+o.w-hs,y:o.y+o.h-hs,c:'se'},{x:o.x+o.w/2-hs,y:o.y+o.h-hs,c:'s'},
+    {x:o.x-hs,y:o.y+o.h-hs,   c:'sw'},{x:o.x-hs,y:o.y+o.h/2-hs,c:'w'}
+  ];
+  for(const hh of handles){
+    gctx.fillStyle='#fff'; gctx.strokeStyle='#e94560'; gctx.lineWidth=1;
+    gctx.fillRect(hh.x, hh.y, h, h); gctx.strokeRect(hh.x, hh.y, h, h);
+  }
+  // 中心十字
+  gctx.strokeStyle='rgba(255,255,255,0.5)'; gctx.lineWidth=1;
+  const cx=o.x+o.w/2, cy=o.y+o.h/2;
+  gctx.beginPath();gctx.moveTo(cx-4,cy);gctx.lineTo(cx+4,cy);gctx.stroke();
+  gctx.beginPath();gctx.moveTo(cx,cy-4);gctx.lineTo(cx,cy+4);gctx.stroke();
+}
+
+// 旋转手柄：从物体中心向上延伸的圆球
+function drawRotateHandle(cx, cy, oy){
+  const rhY = oy - 16; // 手柄在物体上方16px
+  // 连线
+  gctx.strokeStyle='rgba(233,69,96,0.7)'; gctx.lineWidth=1.5; gctx.setLineDash([3,3]);
+  gctx.beginPath(); gctx.moveTo(cx, oy); gctx.lineTo(cx, rhY); gctx.stroke();
+  gctx.setLineDash([]);
+  // 手柄圆球
+  gctx.fillStyle = '#e94560'; gctx.strokeStyle='#fff'; gctx.lineWidth=2;
+  gctx.beginPath(); gctx.arc(cx, rhY, 6, 0, Math.PI*2); gctx.fill(); gctx.stroke();
+  // 标签
+  gctx.fillStyle='rgba(255,255,255,0.7)'; gctx.font='9px monospace';
+  gctx.fillText('旋转', cx-12, rhY-10);
+}
+
+function updateStatus(){
+  document.getElementById('stObjCount').textContent = '物体数: '+objects.length;
+  document.getElementById('stMouse').textContent =
+    '鼠标: ('+mouseX+', '+mouseY+') '+snapInfo();
+  document.getElementById('stLevelSize').textContent = '关卡: '+LW+'×'+LH;
+}
+
+function snapInfo(){
+  if(!snapOn) return '(自由)';
+  return '(吸附至 '+snapSz+'px)';
+}
+
+// ===== 命中检测 =====
+function hitTest(mx, my){
+  // 从上层开始检测
+  for(let i=objects.length-1; i>=0; i--){
+    const o = objects[i];
+    if(mx>=o.x && mx<=o.x+o.w && my>=o.y && my<=o.y+o.h) return i;
+  }
+  return -1;
+}
+function hitResizeHandle(mx, my, o){
+  const h=8;
+  const handles={
+    nw:{x:o.x-h/2,y:o.y-h/2,w:h,h:h},
+    n:{x:o.x+o.w/2-h/2,y:o.y-h/2,w:h,h:h},
+    ne:{x:o.x+o.w-h/2,y:o.y-h/2,w:h,h:h},
+    e:{x:o.x+o.w-h/2,y:o.y+o.h/2-h/2,w:h,h:h},
+    se:{x:o.x+o.w-h/2,y:o.y+o.h-h/2,w:h,h:h},
+    s:{x:o.x+o.w/2-h/2,y:o.y+o.h-h/2,w:h,h:h},
+    sw:{x:o.x-h/2,y:o.y+o.h-h/2,w:h,h:h},
+    w:{x:o.x-h/2,y:o.y+o.h/2-h/2,w:h,h:h},
+  };
+  for(const[k,v] of Object.entries(handles)){
+    if(mx>=v.x&&mx<=v.x+v.w&&my>=v.y&&my<=v.y+v.h)return k;
+  }
+  return '';
+}
+// 旋转手柄命中检测（手柄在物体中心上方16px，半径12px的圆形区域）
+function hitRotateHandle(mx, my, o){
+  const cx = o.x + o.w/2, cy = o.y - 16;
+  const d = Math.hypot(mx-cx, my-cy);
+  return d <= 12;
+}
+
+function snap(v){ return snapOn?Math.round(v/snapSz)*snapSz:v; }
+
+// ===== 更新右侧面板 =====
+function updateProps(){
+  const title = document.getElementById('propTitle');
+  const content = document.getElementById('propContent');
+  const actions = document.getElementById('propActions');
+
+  if(selectedIdx<0 || selectedIdx>=objects.length){
+    title.textContent = '未选中物体';
+    content.innerHTML = '<p style="font-size:11px;color:#666">点击画布上的物体查看/编辑属性，或在左侧选择工具后点击画布放置新物体。</p>';
+    actions.style.display = 'none';
+    return;
+  }
+
+  const o = objects[selectedIdx];
+  title.textContent = o.type + ' 属性 (#' + selectedIdx + ')';
+  actions.style.display = 'block';
+
+  // 根据物体类型定义每个属性的合理范围
+  const rangeMap = {
+    x: {min:0, max:LW, step:snapOn?snapSz:1},
+    y: {min:0, max:LH, step:snapOn?snapSz:1},
+    w: {min:4, max:800, step:snapOn?snapSz:1},
+    h: {min:4, max:600, step:snapOn?snapSz:1},
+    angle: {min:-180, max:180, step:1},
+    patrolL: {min:0, max:LW, step:1},
+    patrolR: {min:0, max:LW, step:1},
+    radius:  {min:20, max:400, step:10},
+  };
+
+  let html = '';
+  // ===== 素材替换（所有对象通用）=====
+  html += '<div style="margin-bottom:8px">';
+  html += '<label style="font-size:11px;color:#e94560">素材替换（上传本地图片）</label>';
+  html += '<input type="file" accept="image/*" onchange="uploadAsset(this)" style="width:100%;font-size:11px;margin:4px 0;color:#e0e0e0">';
+  if(o.imgSrc){
+    html += '<div style="margin:4px 0;padding:4px;background:#1a1a2e;border-radius:3px">';
+    html += '<img src="'+o.imgSrc+'" style="max-width:100%;max-height:60px;display:block;margin:4px auto">';
+    html += '<button onclick="clearAsset()" style="font-size:11px;background:#c0392b;border:none;color:#fff;padding:2px 8px;cursor:pointer;border-radius:2px;width:100%">清除素材</button>';
+    html += '</div>';
+  }
+  html += '</div><hr style="border-color:#0f3460;margin:8px 0">';
+  // ===== 通用属性 =====
+  html += propRange('X', 'x', o.x, rangeMap.x);
+  html += propRange('Y', 'y', o.y, rangeMap.y);
+  html += propRange('宽', 'w', o.w, rangeMap.w);
+  html += propRange('高', 'h', o.h, rangeMap.h);
+  html += propRange('角度', 'angle', o.angle||0, rangeMap.angle);
+
+  if(o.type==='shoe'){
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<p style="font-size:10px;color:#888">皮鞋间隙按宽度自动缩放。调整宽高即可改变皮鞋大小。</p>';
+    html += propRange('巡逻左界', 'patrolL', o.patrolL||o.x-100, rangeMap.patrolL);
+    html += propRange('巡逻右界', 'patrolR', o.patrolR||o.x+100, rangeMap.patrolR);
+    // === 关键帧编辑器 ===
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<h4 style="font-size:11px;color:#e94560;margin:4px 0">关键帧路径（高级）</h4>';
+    html += '<p style="font-size:9px;color:#888;line-height:1.5">添加关键帧后，皮鞋将按关键帧路径移动（覆盖巡逻模式）。每帧设置位置和时间(秒)，皮鞋会在帧之间平滑插值并循环。</p>';
+    if(!o.keyframes) o.keyframes = [];
+    html += '<div id="kfList" style="max-height:200px;overflow-y:auto;margin:4px 0">';
+    (o.keyframes||[]).forEach((kf,ki)=>{
+      html += '<div style="display:flex;gap:3px;align-items:center;margin:2px 0;padding:3px;background:#1a1a2e;border-radius:3px;font-size:10px">';
+      html += '<span style="color:#e94560;font-weight:bold">#'+ki+'</span>';
+      html += '<label style="color:#888">X:</label><input type="number" value="'+kf.x+'" onchange="setKfProp('+ki+',\'x\',this.value)" style="width:45px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:9px;padding:1px">';
+      html += '<label style="color:#888">Y:</label><input type="number" value="'+kf.y+'" onchange="setKfProp('+ki+',\'y\',this.value)" style="width:45px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:9px;padding:1px">';
+      html += '<label style="color:#888">t:</label><input type="number" step="0.1" value="'+kf.t+'" onchange="setKfProp('+ki+',\'t\',this.value)" style="width:40px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:9px;padding:1px">';
+      html += '<button onclick="removeKeyframe('+ki+')" style="background:#c0392b;border:none;color:#fff;padding:1px 4px;cursor:pointer;font-size:9px;border-radius:2px">X</button>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<button onclick="addKeyframe()" style="margin-top:4px;background:#27ae60;border-color:#2ecc71;font-size:10px;padding:3px 8px">+ 添加关键帧</button>';
+    html += '<button onclick="clearKeyframes()" style="margin-left:4px;background:#555;border-color:#666;font-size:10px;padding:3px 8px">清空（用巡逻）</button>';
+  }
+  if(o.type==='spray'){
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<p style="font-size:10px;color:#ff6b6b">进入致死半径即死亡（不可抗力，无法逃脱）</p>';
+    html += propRange('致死半径', 'radius', o.radius||120, rangeMap.radius);
+  }
+  if(o.type==='pressure'){
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<h4 style="font-size:11px;color:#e94560;margin:8px 0 4px">连锁效果</h4>';
+    if(!o.effects) o.effects = [];
+    html += '<div id="effectsList" style="max-height:300px;overflow-y:auto">';
+    (o.effects||[]).forEach((eff,ei)=>{
+      html += pressureEffectCard(eff, ei);
+    });
+    html += '</div>';
+    html += '<button onclick="addPressureEffect()" style="margin-top:6px;background:#27ae60;border-color:#2ecc71;font-size:11px">+ 添加效果</button>';
+  }
+  if(o.type==='wormhole'){
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<label style="font-size:11px;color:#00e5ff">配对 ID（相同 ID 的洞口互相传送）</label>';
+    html += '<input type="text" value="'+(o.pairId||'')+'" oninput="setPropStr(\'pairId\',this.value)" style="width:100%;padding:4px 8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #0f3460;border-radius:3px;font-size:12px;margin:4px 0">';
+    // 列出所有其他洞口
+    const others = objects.filter(ob=>ob.type==='wormhole' && ob._id!==o._id);
+    if(others.length > 0){
+      html += '<label style="font-size:10px;color:#888">可选配对洞口：</label>';
+      others.forEach(ob=>{
+        html += '<div style="font-size:10px;color:#aaa;cursor:pointer;padding:2px 4px" onclick="setPropStr(\'pairId\',\''+ob.pairId+'\')">'+ob._id+' → '+ob.pairId+'</div>';
+      });
+    }
+  }
+  if(o.type==='levelexit'){
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<p style="font-size:11px;color:#888">隐形传送点：玩家碰到此区域即跳到下一关。<br>下一关文件名在全局参数里设置。</p>';
+  }
+  if(o.type==='bgitem'){
+    html += '<hr style="border-color:#0f3460;margin:8px 0">';
+    html += '<label style="font-size:11px;color:#888">标签文字（可选）</label>';
+    html += '<input type="text" value="'+(o.label||'')+'" oninput="setPropStr(\'label\',this.value)" style="width:100%;padding:4px 8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #0f3460;border-radius:3px;font-size:12px;margin:4px 0" placeholder="背景物品标签">';
+  }
+
+  content.innerHTML = html;
+}
+
+// propRange: 用 range 滑条 + number 输入框联动
+function propRange(label, key, val, range){
+  const r = range||{min:0,max:800,step:1};
+  const v = Math.round(val);
+  return '<div style="display:flex;align-items:center;gap:6px;margin:4px 0 1px">'+
+    '<span style="font-size:11px;color:#888;flex:0 0 auto;min-width:20px">'+label+'</span>'+
+    '<input type="range" id="rng-'+key+'" min="'+r.min+'" max="'+r.max+'" step="'+r.step+'" value="'+v+
+    '" oninput="setProp(\''+key+'\',this.value)" style="flex:1;margin:0;height:14px">'+
+    '<input type="number" id="num-'+key+'" min="'+r.min+'" max="'+r.max+'" step="'+r.step+'" value="'+v+
+    '" oninput="setProp(\''+key+'\',this.value)" style="width:52px;padding:2px 6px;background:#1a1a2e;color:#e94560;border:1px solid #0f3460;border-radius:3px;font-size:11px;font-weight:bold;text-align:right">'+
+    '</div>';
+}
+
+function setProp(key, val){
+  if(selectedIdx<0) return;
+  const v = parseFloat(val);
+  if(isNaN(v)) return;
+  objects[selectedIdx][key] = v;
+  render();
+  // 双向同步，不重建整个面板（避免 number 输入框失去焦点）
+  const rng = document.getElementById('rng-'+key);
+  const num = document.getElementById('num-'+key);
+  if(rng) rng.value = v;
+  if(num) num.value = v;
+}
+function setPropStr(key, val){
+  if(selectedIdx<0) return;
+  objects[selectedIdx][key] = val;
+}
+
+// 素材上传（将本地图片转为 data URL 存入 obj.imgSrc）
+function uploadAsset(input){
+  if(selectedIdx<0 || !input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e){
+    objects[selectedIdx].imgSrc = e.target.result;
+    render(); updateProps();
+  };
+  reader.readAsDataURL(file);
+}
+// 清除素材
+function clearAsset(){
+  if(selectedIdx<0) return;
+  objects[selectedIdx].imgSrc = '';
+  render(); updateProps();
+}
+
+// 全局背景图上传
+function uploadEditorBgImage(input){
+  if(!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e){
+    editorBgImgSrc = e.target.result;
+    renderConfigTab();
+    render(); // 立即刷新画布显示背景图
+  };
+  reader.readAsDataURL(file);
+}
+function clearEditorBgImage(){
+  editorBgImgSrc = '';
+  renderConfigTab();
+  render();
+}
+
+// ===== 压力板效果编辑器 =====
+function pressureEffectCard(eff, idx){
+  const targets = getAllTargetableObjects();
+  let h = '<div style="margin:4px 0;padding:6px;background:#1a1a2e;border-radius:4px;border:1px solid #0f3460;font-size:10px">';
+  h += '<div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">';
+  h += '<span style="color:#e94560;font-weight:bold">#'+(idx+1)+'</span>';
+  // 目标选择
+  h += '<select onchange="setEffectProp('+idx+',\'targetId\',this.value)" style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:2px">';
+  h += '<option value="">选择目标...</option>';
+  for(const t of targets){
+    const sel = eff.targetId===t._id?' selected':'';
+    h += '<option value="'+t._id+'"'+sel+'>'+t._id+' ('+t.type+')</option>';
+  }
+  h += '</select>';
+  // 效果类型
+  h += '<select onchange="setEffectProp('+idx+',\'effect\',this.value)" style="background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:2px">';
+  const types = ['move','scale','rotate','disappear','appear','zoom','bubble','subtitle','shoe_pause','shoe_resume','shoe_reverse','shoe_goto'];
+  const typeLabels = {move:'移动',scale:'缩放',rotate:'旋转',disappear:'消失',appear:'出现',zoom:'放大画面',bubble:'对话气泡',subtitle:'字幕',shoe_pause:'皮鞋暂停',shoe_resume:'皮鞋恢复',shoe_reverse:'皮鞋反转',shoe_goto:'皮鞋跳转'};
+  for(const t of types){
+    h += '<option value="'+t+'"'+(eff.effect===t?' selected':'')+'>'+typeLabels[t]+'</option>';
+  }
+  h += '</select>';
+  h += '<button onclick="removePressureEffect('+idx+')" style="background:#c0392b;border:none;color:#fff;padding:2px 6px;cursor:pointer;font-size:10px;border-radius:2px">X</button>';
+  h += '</div>';
+
+  // 效果参数（根据类型显示）
+  const eType = eff.effect||'move';
+  h += '<div style="display:flex;gap:4px;flex-wrap:wrap">';
+  h += '<label style="color:#888">时长:</label><input type="range" min="0.1" max="10" step="0.1" value="'+(eff.duration||1)+'" oninput="setEffectProp('+idx+',\'duration\',this.value)" style="flex:1;height:10px"><span style="color:#e94560;font-size:9px">'+(eff.duration||1).toFixed(1)+'s</span>';
+
+  if(eType==='move'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">目标X:</label><input type="number" value="'+(eff.targetX!=null?eff.targetX:'')+'" placeholder="不变" onchange="setEffectNum('+idx+',\'targetX\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+    h += '<label style="color:#888">目标Y:</label><input type="number" value="'+(eff.targetY!=null?eff.targetY:'')+'" placeholder="不变" onchange="setEffectNum('+idx+',\'targetY\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+  } else if(eType==='scale'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">目标宽:</label><input type="number" value="'+(eff.targetW!=null?eff.targetW:'')+'" placeholder="不变" onchange="setEffectNum('+idx+',\'targetW\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+    h += '<label style="color:#888">目标高:</label><input type="number" value="'+(eff.targetH!=null?eff.targetH:'')+'" placeholder="不变" onchange="setEffectNum('+idx+',\'targetH\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+  } else if(eType==='rotate'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">目标角度:</label><input type="number" value="'+(eff.targetAngle!=null?eff.targetAngle:'')+'" placeholder="不变" onchange="setEffectNum('+idx+',\'targetAngle\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px"><span style="color:#888;font-size:9px">°</span>';
+  } else if(eType==='zoom'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">目标X:</label><input type="number" value="'+(eff.targetX||0)+'" onchange="setEffectNum('+idx+',\'targetX\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+    h += '<label style="color:#888">目标Y:</label><input type="number" value="'+(eff.targetY||0)+'" onchange="setEffectNum('+idx+',\'targetY\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+    h += '<label style="color:#888">宽:</label><input type="number" value="'+(eff.targetW||200)+'" onchange="setEffectNum('+idx+',\'targetW\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+    h += '<label style="color:#888">高:</label><input type="number" value="'+(eff.targetH||200)+'" onchange="setEffectNum('+idx+',\'targetH\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+  } else if(eType==='bubble'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">图标:</label><select onchange="setEffectProp('+idx+',\'icon\',this.value)" style="background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:2px">';
+    h += '<option value="!"'+(eff.icon==='!'?' selected':'')+'>! 感叹号</option>';
+    h += '<option value="?"'+(eff.icon==='?'?' selected':'')+'>? 问号</option>';
+    h += '<option value="♥"'+(eff.icon==='♥'?' selected':'')+'>♥ 心</option>';
+    h += '<option value="☆"'+(eff.icon==='☆'?' selected':'')+'>☆ 星</option>';
+    h += '</select>';
+    h += '<label style="color:#888">文字:</label><input type="text" value="'+(eff.text||'')+'" oninput="setEffectProp('+idx+',\'text\',this.value)" style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:2px">';
+  } else if(eType==='subtitle'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">字幕文字:</label><input type="text" value="'+(eff.text||'')+'" oninput="setEffectProp('+idx+',\'text\',this.value)" style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:2px">';
+    h += '<label style="color:#888">图片路径:</label><input type="text" value="'+(eff.imgSrc||'')+'" oninput="setEffectProp('+idx+',\'imgSrc\',this.value)" style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:2px">';
+  } else if(eType==='shoe_goto'){
+    h += '</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">';
+    h += '<label style="color:#888">关键帧索引:</label><input type="number" min="0" value="'+(eff.kfIndex||0)+'" onchange="setEffectNum('+idx+',\'kfIndex\',this.value)" style="width:50px;background:#0f3460;color:#e0e0e0;border:1px solid #1a508b;font-size:10px;padding:1px">';
+    h += '<span style="color:#888;font-size:9px">(从0开始)</span>';
+  } else if(eType==='shoe_pause' || eType==='shoe_resume' || eType==='shoe_reverse'){
+    h += '</div><div style="margin-top:2px"><span style="color:#888;font-size:9px">无需额外参数</span></div>';
+  }
+  // disappear/appear 没有额外参数，只设时长
+  h += '</div>';
+  h += '</div>';
+  return h;
+}
+
+function addPressureEffect(){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(o.type!=='pressure') return;
+  if(!o.effects) o.effects = [];
+  o.effects.push({targetId:'',effect:'move',duration:1});
+  render(); updateProps();
+}
+
+function removePressureEffect(idx){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(!o.effects) return;
+  o.effects.splice(idx,1);
+  render(); updateProps();
+}
+
+// === 皮鞋关键帧操作 ===
+function addKeyframe(){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(o.type!=='shoe') return;
+  if(!o.keyframes) o.keyframes = [];
+  // 默认在当前皮鞋位置添加关键帧，时间递增
+  const lastT = o.keyframes.length>0 ? (o.keyframes[o.keyframes.length-1].t||0) : 0;
+  o.keyframes.push({x:Math.round(o.x), y:Math.round(o.y), t:lastT+2});
+  render(); updateProps();
+}
+function removeKeyframe(idx){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(!o.keyframes) return;
+  o.keyframes.splice(idx,1);
+  render(); updateProps();
+}
+function setKfProp(idx, key, val){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(!o.keyframes || !o.keyframes[idx]) return;
+  o.keyframes[idx][key] = key==='t' ? parseFloat(val) : parseInt(val);
+  render();
+}
+function clearKeyframes(){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  o.keyframes = [];
+  render(); updateProps();
+}
+
+function setEffectProp(idx, key, val){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(!o.effects) return;
+  o.effects[idx][key] = val;
+  // 如果切效果类型，清掉不相关的目标值
+  if(key==='effect'){
+    const e = o.effects[idx];
+    if(val==='move'){ delete e.targetW; delete e.targetH; delete e.targetAngle; delete e.targetX; delete e.targetY; }
+    else if(val==='scale'){ delete e.targetX; delete e.targetY; delete e.targetAngle; }
+    else if(val==='rotate'){ delete e.targetX; delete e.targetY; delete e.targetW; delete e.targetH; }
+    else if(val==='disappear'||val==='appear'){ delete e.targetX; delete e.targetY; delete e.targetW; delete e.targetH; delete e.targetAngle; }
+    else if(val==='zoom'){ delete e.icon; delete e.text; delete e.imgSrc; }
+    else if(val==='bubble'){ delete e.targetX; delete e.targetY; delete e.targetW; delete e.targetH; delete e.imgSrc; }
+    else if(val==='subtitle'){ delete e.targetX; delete e.targetY; delete e.targetW; delete e.targetH; delete e.targetAngle; delete e.icon; }
+    else if(val==='shoe_pause'||val==='shoe_resume'||val==='shoe_reverse'){ delete e.targetX; delete e.targetY; delete e.targetW; delete e.targetH; delete e.targetAngle; delete e.icon; delete e.text; delete e.imgSrc; delete e.kfIndex; }
+    else if(val==='shoe_goto'){ delete e.targetX; delete e.targetY; delete e.targetW; delete e.targetH; delete e.targetAngle; delete e.icon; delete e.text; delete e.imgSrc; }
+  }
+  render(); updateProps();
+}
+
+function setEffectNum(idx, key, val){
+  if(selectedIdx<0) return;
+  const o = objects[selectedIdx];
+  if(!o.effects) return;
+  const v = parseFloat(val);
+  if(isNaN(v)){ delete o.effects[idx][key]; } else { o.effects[idx][key] = v; }
+}
+function pushUndo(){
+  undoStack.push(JSON.parse(JSON.stringify(objects)));
+  redoStack = [];
+  if(undoStack.length>50) undoStack.shift();
+}
+function undo(){
+  if(undoStack.length===0) return;
+  redoStack.push(JSON.parse(JSON.stringify(objects)));
+  objects = undoStack.pop();
+  selectedIdx = Math.min(selectedIdx, objects.length-1);
+  render(); updateProps();
+}
+function redo(){
+  if(redoStack.length===0) return;
+  undoStack.push(JSON.parse(JSON.stringify(objects)));
+  objects = redoStack.pop();
+  render(); updateProps();
+}
+
+// ===== 导出 / 导入 =====
+function exportLevel(){
+  const data = { platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[], pressurePlates:[], wormholes:[], bgItems:[], nest:null, fridge:null, playerStart:null, levelExit:null, bgImgSrc:'' };
+  for(const o of objects){
+    switch(o.type){
+    case 'platform': data.platforms.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'food': data.food.push({x:o.x,y:o.y,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'shoe': data.shoes.push({x:o.x,y:o.y,w:o.w,h:o.h,patrolL:o.patrolL,patrolR:o.patrolR,keyframes:o.keyframes||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'spray': data.sprays.push({x:o.x,y:o.y,radius:o.radius||120,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'pushable': data.pushables.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'destructible': data.destructibles.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'pressure': data.pressurePlates.push({x:o.x,y:o.y,w:o.w,h:o.h,effects:o.effects||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'wormhole': data.wormholes.push({x:o.x,y:o.y,w:o.w,h:o.h,pairId:o.pairId||'',_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'bgitem': data.bgItems.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||'',label:o.label||''}); break;
+    case 'levelexit': data.levelExit={x:o.x,y:o.y,w:o.w,h:o.h}; break;
+    case 'nest': data.nest={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; data.playerStart={x:o.x, y:o.y-40}; break;
+    case 'fridge': data.fridge={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; break;
+    }
+  }
+  // 保存全局背景图（直接用变量，不依赖 DOM）
+  if(editorBgImgSrc) data.bgImgSrc = editorBgImgSrc;
+  const json = JSON.stringify(data,null,2);
+  // 复制到剪贴板
+  navigator.clipboard.writeText(json).then(()=>alert('JSON 已复制到剪贴板！\n\n可直接粘贴保存为 .json 文件')).catch(()=>{});
+  // 也弹出查看
+  const w=window.open('','_blank','width=500,height=400');
+  w.document.write('<pre style="font-size:11px">'+json.replace(/</g,'&lt;')+'</pre>');
+}
+function importLevel(){
+  const input = prompt('粘贴关卡 JSON 数据：');
+  if(!input) return;
+  try{
+    pushUndo();
+    const data = JSON.parse(input);
+    objects = [];
+    (data.platforms||[]).forEach(p=>addObj('platform',p.x,p.y,p.w,p.h,{_id:p._id,imgSrc:p.imgSrc||''}));
+    (data.food||[]).forEach(f=>addObj('food',f.x,f.y,12,12,{_id:f._id,imgSrc:f.imgSrc||''}));
+    (data.shoes||[]).forEach(s=>addObj('shoe',s.x,s.y,s.w||48,s.h||32,{_id:s._id,patrolL:s.patrolL||s.x-100,patrolR:s.patrolR||s.x+100,keyframes:s.keyframes||[],imgSrc:s.imgSrc||''}));
+    (data.sprays||[]).forEach(s=>addObj('spray',s.x,s.y,20,24,{_id:s._id,radius:s.radius||120,imgSrc:s.imgSrc||''}));
+    (data.pushables||[]).forEach(p=>addObj('pushable',p.x,p.y,p.w,p.h,{_id:p._id,imgSrc:p.imgSrc||''}));
+    (data.destructibles||[]).forEach(d=>addObj('destructible',d.x,d.y,d.w,d.h,{_id:d._id,imgSrc:d.imgSrc||''}));
+    (data.pressurePlates||[]).forEach(p=>addObj('pressure',p.x,p.y,p.w,p.h,{_id:p._id,effects:p.effects||[],imgSrc:p.imgSrc||''}));
+    (data.wormholes||[]).forEach(w=>addObj('wormhole',w.x,w.y,w.w||32,w.h||40,{_id:w._id,pairId:w.pairId||'',imgSrc:w.imgSrc||''}));
+    (data.bgItems||[]).forEach(b=>addObj('bgitem',b.x,b.y,b.w||64,b.h||64,{_id:b._id,imgSrc:b.imgSrc||'',label:b.label||''}));
+    if(data.levelExit) addObj('levelexit', data.levelExit.x, data.levelExit.y, data.levelExit.w||80, data.levelExit.h||60);
+    if(data.nest) addObj('nest', data.nest.x, data.nest.y, data.nest.w||40, data.nest.h||40,{_id:data.nest._id,imgSrc:data.nest.imgSrc||''});
+    if(data.fridge) addObj('fridge', data.fridge.x, data.fridge.y, data.fridge.w||56, data.fridge.h||80,{_id:data.fridge._id,imgSrc:data.fridge.imgSrc||''});
+    // 加载全局背景图
+    if(data.bgImgSrc){ editorBgImgSrc = data.bgImgSrc; }
+    selectedIdx=-1;
+    render(); updateProps();
+    alert('导入成功！共 '+objects.length+' 个物体。');
+  }catch(e){ alert('解析失败: '+e.message); }
+}
+function saveLevel(){
+  const data = { platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[], pressurePlates:[], wormholes:[], bgItems:[], nest:null, fridge:null, playerStart:null, levelExit:null, bgImgSrc:'' };
+  for(const o of objects){
+    switch(o.type){
+    case 'platform': data.platforms.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'food': data.food.push({x:o.x,y:o.y,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'shoe': data.shoes.push({x:o.x,y:o.y,w:o.w,h:o.h,patrolL:o.patrolL,patrolR:o.patrolR,keyframes:o.keyframes||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'spray': data.sprays.push({x:o.x,y:o.y,radius:o.radius||120,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'pushable': data.pushables.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'destructible': data.destructibles.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'pressure': data.pressurePlates.push({x:o.x,y:o.y,w:o.w,h:o.h,effects:o.effects||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'wormhole': data.wormholes.push({x:o.x,y:o.y,w:o.w,h:o.h,pairId:o.pairId||'',_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'bgitem': data.bgItems.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||'',label:o.label||''}); break;
+    case 'levelexit': data.levelExit={x:o.x,y:o.y,w:o.w,h:o.h}; break;
+    case 'nest': data.nest={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; data.playerStart={x:o.x, y:o.y-40}; break;
+    case 'fridge': data.fridge={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; break;
+    }
+  }
+  // 保存全局背景图（直接用变量）
+  if(editorBgImgSrc) data.bgImgSrc = editorBgImgSrc;
+  const json = JSON.stringify(data,null,2);
+  const blob = new Blob([json],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'level1.json';
+  a.click();
+  alert('文件已下载为 level1.json，放入 levels/ 目录即可替换默认关卡。');
+}
+
+// ===== 事件处理 =====
+gridCvs.addEventListener('mousemove', e=>{
+  mouseX = Math.floor(e.offsetX); mouseY = Math.floor(e.offsetY);
+
+  if(dragMode==='rotate' && selectedIdx>=0){
+    // 旋转：计算鼠标相对物体中心的角度
+    const o = objects[selectedIdx];
+    const cx = o.x + o.w/2, cy = o.y + o.h/2;
+    const ang = Math.atan2(mouseY - cy, mouseX - cx) * 180 / Math.PI + 90;
+    // 吸附：按住Shift吸附到15度增量
+    let newAngle = Math.round(ang);
+    if(e.shiftKey) newAngle = Math.round(newAngle/15)*15;
+    o.angle = newAngle;
+    render();
+  } else if(dragMode==='move' && selectedIdx>=0){
+    const o = objects[selectedIdx];
+    const dx = mouseX - dragStart.x, dy = mouseY - dragStart.y;
+    o.x = snap(dragOrig.x + dx); o.y = snap(dragOrig.y + dy);
+    render();
+  } else if(dragMode==='resize' && selectedIdx>=0){
+    const o = objects[selectedIdx];
+    const dx = mouseX - dragStart.x, dy = mouseY - dragStart.y;
+    let {x,y,w,h} = dragOrig;
+    if(resizeHandle.includes('e')) w = Math.max(8, dragOrig.w + dx);
+    if(resizeHandle.includes('w')){ w = Math.max(8, dragOrig.w - dx); x = dragOrig.x + dx; }
+    if(resizeHandle.includes('s')) h = Math.max(4, dragOrig.h + dy);
+    if(resizeHandle.includes('n')){ h = Math.max(4, dragOrig.h - dy); y = dragOrig.y + dy; }
+    o.x = snap(x); o.y = snap(y); o.w = snap(w); o.h = snap(h);
+    render();
+  } else if(dragMode==='place'){
+    const o = objects[objects.length-1];
+    o.w = snap(Math.max(8, mouseX - o.x));
+    o.h = snap(Math.max(4, mouseY - o.y));
+    render();
+  }
+
+  updateStatus();
+});
+
+gridCvs.addEventListener('mousedown', e=>{
+  if(e.button!==0) return;
+  const mx = Math.floor(e.offsetX), my = Math.floor(e.offsetY);
+  mouseDown = true;
+
+  if(currentTool==='select'){
+    // 1. 先检查旋转手柄
+    if(selectedIdx>=0 && hitRotateHandle(mx, my, objects[selectedIdx])){
+      dragMode = 'rotate';
+      dragStart={x:mx,y:my};
+      dragOrig={angle:objects[selectedIdx].angle||0};
+      return;
+    }
+    // 2. 再检查 resize handle
+    if(selectedIdx>=0){
+      const handle = hitResizeHandle(mx, my, objects[selectedIdx]);
+      if(handle){
+        dragMode = 'resize'; resizeHandle = handle;
+        dragStart={x:mx,y:my};
+        dragOrig={...objects[selectedIdx]};
+        return;
+      }
+    }
+    // 3. 再检查物体命中
+    const hit = hitTest(mx, my);
+    if(hit>=0){
+      if(hit!==selectedIdx) pushUndo();
+      selectedIdx = hit;
+      dragMode = 'move';
+      dragStart={x:mx,y:my};
+      dragOrig={x:objects[hit].x,y:objects[hit].y};
+      render(); updateProps();
+    } else {
+      selectedIdx = -1;
+      render(); updateProps();
+    }
+  } else {
+    // 放置模式
+    pushUndo();
+    const def = DEFAULTS[currentTool];
+    addObj(currentTool, snap(mx), snap(my), def.w||16, def.h||16,
+      currentTool==='shoe'?{patrolL:snap(mx)-100,patrolR:snap(mx)+100}
+      :currentTool==='spray'?{radius:120}
+      :currentTool==='pressure'?{}
+      :{});
+    selectedIdx = objects.length - 1;
+    dragMode = 'place';
+    dragStart={x:mx,y:my};
+    render(); updateProps();
+  }
+});
+
+gridCvs.addEventListener('mouseup', e=>{
+  if(dragMode==='move'||dragMode==='resize'||dragMode==='place'||dragMode==='rotate'){
+    dragMode='';
+    render(); updateProps();
+  }
+  mouseDown = false;
+});
+
+document.addEventListener('keydown', e=>{
+  // 按键录制优先
+  if(recordingKey && handleKeyRecord(e)) return;
+
+  // 快捷键
+  if(e.ctrlKey && e.code==='KeyZ'){ e.preventDefault(); undo(); return; }
+  if(e.ctrlKey && e.code==='KeyY'){ e.preventDefault(); redo(); return; }
+  if(e.ctrlKey && e.code==='KeyC'){
+    if(selectedIdx>=0){ clipboard = JSON.parse(JSON.stringify(objects[selectedIdx])); }
+    return;
+  }
+  if(e.ctrlKey && e.code==='KeyV'){
+    if(clipboard){ pushUndo(); const c={...clipboard,x:clipboard.x+snapSz,y:clipboard.y+snapSz}; objects.push(c); selectedIdx=objects.length-1; render();updateProps(); }
+    return;
+  }
+  if(e.code==='Delete'){ if(selectedIdx>=0){pushUndo();objects.splice(selectedIdx,1);selectedIdx=-1;render();updateProps();} return; }
+
+  // 工具快捷键
+  const toolMap={KeyS:'select',KeyW:'platform',KeyF:'food',KeyH:'shoe',KeyP:'spray',KeyB:'pushable',KeyD:'destructible',KeyV:'pressure'};
+  if(toolMap[e.code] && !e.ctrlKey){
+    currentTool = toolMap[e.code];
+    document.getElementById('selTool').value = currentTool;
+    updateToolUI();
+    dragMode='';
+  }
+});
+
+// ===== UI 绑定 =====
+document.getElementById('selTool').addEventListener('change',e=>{
+  currentTool = e.target.value; updateToolUI(); dragMode='';
+});
+document.getElementById('chkGrid').addEventListener('change',e=>{showGrid=e.target.checked;render();});
+document.getElementById('chkSnap').addEventListener('change',e=>{snapOn=e.target.checked;render();});
+document.getElementById('snapSize').addEventListener('change',e=>{snapSz=parseInt(e.target.value)||16;render();});
+document.getElementById('btnExport').addEventListener('click',exportLevel);
+document.getElementById('btnImport').addEventListener('click',importLevel);
+document.getElementById('btnSave').addEventListener('click',saveLevel);
+document.getElementById('btnDelete').addEventListener('click',()=>{
+  if(selectedIdx>=0){pushUndo();objects.splice(selectedIdx,1);selectedIdx=-1;render();updateProps();}
+});
+document.getElementById('btnDuplicate').addEventListener('click',()=>{
+  if(selectedIdx>=0){pushUndo();const c=JSON.parse(JSON.stringify(objects[selectedIdx]));c.x+=snapSz;c.y+=snapSz;objects.push(c);selectedIdx=objects.length-1;render();updateProps();}
+});
+// 层级排序：上移/下移
+document.getElementById('btnLayerUp').addEventListener('click',()=>{
+  if(selectedIdx<0||selectedIdx>=objects.length-1) return;
+  pushUndo();
+  const tmp = objects[selectedIdx];
+  objects[selectedIdx] = objects[selectedIdx+1];
+  objects[selectedIdx+1] = tmp;
+  selectedIdx++;
+  render(); updateProps();
+});
+document.getElementById('btnLayerDown').addEventListener('click',()=>{
+  if(selectedIdx<1) return;
+  pushUndo();
+  const tmp = objects[selectedIdx];
+  objects[selectedIdx] = objects[selectedIdx-1];
+  objects[selectedIdx-1] = tmp;
+  selectedIdx--;
+  render(); updateProps();
+});
+document.getElementById('btnTest').addEventListener('click',()=>{
+  // 保存当前关卡，然后打开游戏
+  const data = { platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[], pressurePlates:[], wormholes:[], bgItems:[], nest:null, fridge:null, playerStart:null, levelExit:null };
+  for(const o of objects){
+    switch(o.type){
+    case 'platform': data.platforms.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'food': data.food.push({x:o.x,y:o.y,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'shoe': data.shoes.push({x:o.x,y:o.y,w:o.w,h:o.h,patrolL:o.patrolL,patrolR:o.patrolR,keyframes:o.keyframes||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'spray': data.sprays.push({x:o.x,y:o.y,radius:o.radius||120,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'pushable': data.pushables.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'destructible': data.destructibles.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'pressure': data.pressurePlates.push({x:o.x,y:o.y,w:o.w,h:o.h,effects:o.effects||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'wormhole': data.wormholes.push({x:o.x,y:o.y,w:o.w,h:o.h,pairId:o.pairId||'',_id:o._id,imgSrc:o.imgSrc||''}); break;
+    case 'bgitem': data.bgItems.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||'',label:o.label||''}); break;
+    case 'levelexit': data.levelExit={x:o.x,y:o.y,w:o.w,h:o.h}; break;
+    case 'nest': data.nest={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; data.playerStart={x:o.x,y:o.y-40}; break;
+    case 'fridge': data.fridge={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; break;
+    }
+  }
+  // 保存全局背景图（直接用变量）
+  if(editorBgImgSrc) data.bgImgSrc = editorBgImgSrc;
+  localStorage.setItem('buggame_test_level', JSON.stringify(data));
+  window.open('index.html?test','_blank');
+});
+
+// 新建空白关卡：清空所有物体，回到初始空白状态
+document.getElementById('btnNew').addEventListener('click',()=>{
+  if(objects.length>0 && !confirm('确定要清空当前关卡吗？所有未保存的内容将丢失。')) return;
+  loadDefaultLevel();
+  selectedIdx = -1;
+  updateProps();
+});
+
+// 左侧工具栏点击
+document.querySelectorAll('.tool-item').forEach(item=>{
+  item.addEventListener('click',()=>{
+    currentTool = item.dataset.tool;
+    document.getElementById('selTool').value = currentTool;
+    updateToolUI();
+  });
+});
+
+function updateToolUI(){
+  document.querySelectorAll('.tool-item').forEach(i=>i.classList.remove('selected'));
+  const active = document.querySelector('.tool-item[data-tool="'+currentTool+'"]');
+  if(active) active.classList.add('selected');
+}
+
+// ===== 全局参数面板 =====
+// 从 config.js 的 CFG 读取默认值（深拷贝，编辑器内独立修改）
+const gameCfg = JSON.parse(JSON.stringify({
+  JUMP_VEL_FULL: -520, JUMP_VEL_HALF: -340, JUMP_VEL_EMPTY: -200,
+  DOUBLE_JUMP_THRESHOLD: 50, DOUBLE_JUMP_VEL: -420,
+  HUNGER_MAX_START: 80, HUNGER_DECAY: 0.7, HUNGER_FOOD_VALUE: 10,
+  HUNGER_BABY_THRESHOLD: 80, HUNGER_EAT_BABY_GAIN: 15,
+  PLAYER_W: 24, PLAYER_H: 20, PLAYER_SPEED: 220,
+  BABY_INITIAL_W: 8, BABY_INITIAL_H: 6, BABY_GROW_RATE: 2.5, BABY_MAX_SAFE_W: 20,
+  GRAVITY: 1400, MAX_FALL_SPEED: 800,
+  SHOE_SPEED: 60, SPRAY_PULL_FORCE: 300,
+  BITE_RANGE: 40, BITE_COOLDOWN: 0.25,
+  // 过场动画参数
+  CUTSCENE_ZOOM_SPEED: 2.5, CUTSCENE_BUBBLE_DUR: 2.0, CUTSCENE_SUBTITLE_DUR: 3.0,
+  // 洞口尺寸
+  WORMHOLE_W: 32, WORMHOLE_H: 40,
+  // 下一关文件名
+  NEXT_LEVEL: '',
+  KEY_LEFT: 'A / Left', KEY_RIGHT: 'D / Right', KEY_JUMP: 'W / Up / Space',
+  KEY_BITE: 'J', KEY_SUICIDE: 'K'
+}));
+
+// 按键原始数据（用于导出）
+const keyBindings = {
+  left: ['ArrowLeft','KeyA'],
+  right: ['ArrowRight','KeyD'],
+  jump: ['ArrowUp','KeyW','Space'],
+  bite: ['KeyJ'],
+  suicide: ['KeyK']
+};
+
+// Tab 切换
+let activeTab = 'prop';
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    activeTab = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tabProp').style.display = activeTab==='prop'?'block':'none';
+    document.getElementById('tabConfig').style.display = activeTab==='config'?'block':'none';
+    if(activeTab==='config') renderConfigTab();
+  });
+});
+
+// 预设数据
+const PRESETS = {
+  default: JSON.parse(JSON.stringify(gameCfg)),
+  新手友好: {
+    JUMP_VEL_FULL: -560, JUMP_VEL_HALF: -400, JUMP_VEL_EMPTY: -280,
+    DOUBLE_JUMP_THRESHOLD: 30, DOUBLE_JUMP_VEL: -460,
+    HUNGER_MAX_START: 80, HUNGER_DECAY: 0.3, HUNGER_FOOD_VALUE: 15,
+    HUNGER_BABY_THRESHOLD: 80, HUNGER_EAT_BABY_GAIN: 20,
+    PLAYER_W: 24, PLAYER_H: 20, PLAYER_SPEED: 200,
+    BABY_INITIAL_W: 8, BABY_INITIAL_H: 6, BABY_GROW_RATE: 1.5, BABY_MAX_SAFE_W: 24,
+    GRAVITY: 1200, MAX_FALL_SPEED: 700, SHOE_SPEED: 45, SPRAY_PULL_FORCE: 200,
+    BITE_RANGE: 48, BITE_COOLDOWN: 0.15,
+    KEY_LEFT: 'A / Left', KEY_RIGHT: 'D / Right', KEY_JUMP: 'W / Up / Space',
+    KEY_BITE: 'J', KEY_SUICIDE: 'K'
+  },
+  硬核模式: {
+    JUMP_VEL_FULL: -480, JUMP_VEL_HALF: -300, JUMP_VEL_EMPTY: -160,
+    DOUBLE_JUMP_THRESHOLD: 65, DOUBLE_JUMP_VEL: -380,
+    HUNGER_MAX_START: 60, HUNGER_DECAY: 1.5, HUNGER_FOOD_VALUE: 7,
+    HUNGER_BABY_THRESHOLD: 90, HUNGER_EAT_BABY_GAIN: 10,
+    PLAYER_W: 24, PLAYER_H: 20, PLAYER_SPEED: 240,
+    BABY_INITIAL_W: 6, BABY_INITIAL_H: 5, BABY_GROW_RATE: 4.0, BABY_MAX_SAFE_W: 16,
+    GRAVITY: 1600, MAX_FALL_SPEED: 900, SHOE_SPEED: 80, SPRAY_PULL_FORCE: 400,
+    BITE_RANGE: 32, BITE_COOLDOWN: 0.4,
+    KEY_LEFT: 'A / Left', KEY_RIGHT: 'D / Right', KEY_JUMP: 'W / Up / Space',
+    KEY_BITE: 'J', KEY_SUICIDE: 'K'
+  }
+};
+
+// 当前录制按键的状态
+let recordingKey = null;
+
+function renderConfigTab(){
+  const container = document.getElementById('tabConfig');
+  let h = '';
+
+  // 跳跃系统
+  h += '<h4>跳跃系统</h4>';
+  h += cfgRange('饱腹满时跳跃力', 'JUMP_VEL_FULL', -700, -100, 10, '（负值，越小跳越高）');
+  h += cfgRange('饱腹50%时跳跃力', 'JUMP_VEL_HALF', -600, -50, 10);
+  h += cfgRange('饱腹0%时跳跃力', 'JUMP_VEL_EMPTY', -500, -20, 10);
+  h += cfgRange('二段跳速度', 'DOUBLE_JUMP_VEL', -600, -100, 10);
+  h += cfgRange('二段跳所需饱腹%', 'DOUBLE_JUMP_THRESHOLD', 0, 100, 5);
+
+  // 饱腹度
+  h += '<h4>饱腹度系统</h4>';
+  h += cfgRange('每局初始最大%', 'HUNGER_MAX_START', 20, 100, 5);
+  h += cfgRange('每秒衰减量', 'HUNGER_DECAY', 0.1, 5, 0.1);
+  h += cfgRange('每份食物恢复量', 'HUNGER_FOOD_VALUE', 5, 30, 1);
+  h += cfgRange('繁殖触发阈值%', 'HUNGER_BABY_THRESHOLD', 50, 100, 5);
+  h += cfgRange('吃掉小虫恢复量', 'HUNGER_EAT_BABY_GAIN', 5, 40, 1);
+
+  // 生存时间提示
+  const surviveTime = gameCfg.HUNGER_MAX_START / gameCfg.HUNGER_DECAY;
+  h += '<div style="font-size:10px;color:#666;margin:4px 0 8px;padding:4px 8px;background:#1a1a2e;border-radius:3px">'+
+    '饱腹从'+gameCfg.HUNGER_MAX_START+'%→0 约需 <b style="color:#e94560">'+surviveTime.toFixed(1)+'秒</b></div>';
+
+  // 玩家
+  h += '<h4>玩家尺寸 &amp; 速度</h4>';
+  h += cfgRange('碰撞体宽度', 'PLAYER_W', 8, 48, 2, 'px');
+  h += cfgRange('碰撞体高度', 'PLAYER_H', 8, 48, 2, 'px');
+  h += cfgRange('水平移速', 'PLAYER_SPEED', 80, 400, 10, 'px/s');
+
+  // 小虫子
+  h += '<h4>小虫子</h4>';
+  h += cfgRange('初始宽度', 'BABY_INITIAL_W', 4, 20, 1, 'px');
+  h += cfgRange('初始高度', 'BABY_INITIAL_H', 3, 16, 1, 'px');
+  h += cfgRange('成长速度', 'BABY_GROW_RATE', 0.5, 10, 0.5, 'px/s');
+  h += cfgRange('危险体型阈值', 'BABY_MAX_SAFE_W', 12, 40, 2, 'px（超过会攻击玩家）');
+
+  // 物理
+  h += '<h4>物理 &amp; 敌人</h4>';
+  h += cfgRange('重力加速度', 'GRAVITY', 800, 2000, 50, 'px/s²');
+  h += cfgRange('最大下落速度', 'MAX_FALL_SPEED', 400, 1200, 50);
+  h += cfgRange('皮鞋移速', 'SHOE_SPEED', 20, 150, 10);
+  h += cfgRange('蟑螂药吸引力', 'SPRAY_PULL_FORCE', 100, 600, 20);
+
+  // 咬技能
+  h += '<h4>咬技能</h4>';
+  h += cfgRange('咬的范围', 'BITE_RANGE', 16, 80, 4, 'px（玩家前方检测区）');
+  h += cfgRange('咬冷却时间', 'BITE_COOLDOWN', 0.1, 1, 0.05, '秒');
+
+  // 过场动画
+  h += '<h4>过场动画</h4>';
+  h += cfgRange('放大速度', 'CUTSCENE_ZOOM_SPEED', 0.5, 8, 0.5, '（zoom类型，越大越快）');
+  h += cfgRange('气泡持续时间', 'CUTSCENE_BUBBLE_DUR', 0.5, 6, 0.5, '秒');
+  h += cfgRange('字幕持续时间', 'CUTSCENE_SUBTITLE_DUR', 0.5, 8, 0.5, '秒');
+
+  // 洞口
+  h += '<h4>洞口（Wormhole）</h4>';
+  h += cfgRange('洞口宽度', 'WORMHOLE_W', 16, 64, 4, 'px');
+  h += cfgRange('洞口高度', 'WORMHOLE_H', 20, 80, 4, 'px');
+
+  // 关卡链接
+  h += '<h4>关卡链接</h4>';
+  h += '<div class="cfg-row"><span class="cfg-label" title="NEXT_LEVEL">下一关文件</span>'+
+    '<input type="text" value="'+(gameCfg.NEXT_LEVEL||'')+'" placeholder="levels/level2.json" '+
+    'style="flex:1;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;padding:3px 6px;border-radius:3px" '+
+    'oninput="gameCfg.NEXT_LEVEL=this.value"></div>';
+
+  // 背景图片
+  h += '<h4>背景图片（全局）</h4>';
+  h += '<div class="cfg-row"><span class="cfg-label">替换背景</span>'+
+    '<input type="file" accept="image/*" id="cfgBgImg" onchange="uploadEditorBgImage(this)" '+
+    'style="flex:1;font-size:11px;color:#e0e0e0"></div>';
+  if(editorBgImgSrc){
+    h += '<div style="margin:4px 0;padding:4px;background:#1a1a2e;border-radius:3px">'+
+      '<img src="'+editorBgImgSrc+'" style="max-width:100%;max-height:60px;display:block;margin:4px auto">'+
+      '<button onclick="clearEditorBgImage()" style="font-size:11px;background:#c0392b;border:none;color:#fff;padding:2px 8px;cursor:pointer;border-radius:2px;width:100%">清除背景图</button>'+
+      '</div>';
+  }
+
+  // 按键映射
+  h += '<h4>按键映射（点击重绑）</h4>';
+  h += keyBindRow('左移', 'left', gameCfg.KEY_LEFT);
+  h += keyBindRow('右移', 'right', gameCfg.KEY_RIGHT);
+  h += keyBindRow('跳跃', 'jump', gameCfg.KEY_JUMP);
+  h += keyBindRow('咬', 'bite', gameCfg.KEY_BITE);
+  h += keyBindRow('自杀', 'suicide', gameCfg.KEY_SUICIDE);
+
+  // 预设按钮
+  h += '<h4>参数预设</h4>';
+  h += '<div style="display:flex;gap:4px;flex-wrap:wrap">';
+  for(const name of ['default','新手友好','硬核模式']){
+    const label = name==='default'?'默认':name;
+    h += '<button onclick="applyPreset(\''+name+'\')" style="flex:1;min-width:70px;font-size:11px;padding:5px 4px">'+label+'</button>';
+  }
+  h += '</div>';
+
+  // 导出按钮
+  h += '<button onclick="exportConfig()" style="margin-top:8px;background:#27ae60;border-color:#2ecc71">导出 config.js</button>';
+  h += '<button onclick="resetConfig()" style="margin-top:4px;background:#c0392b;border-color:#e74c3c">恢复默认参数</button>';
+
+  container.innerHTML = h;
+}
+
+function cfgRange(label, key, min, max, step, unit){
+  unit = unit||'';
+  const v = typeof gameCfg[key]==='number'?gameCfg[key]:0;
+  const displayVal = step>=1?Math.round(v):v.toFixed(1);
+  return '<div class="cfg-row">'+
+    '<span class="cfg-label" title="'+key+'">'+label+'</span>'+
+    '<input type="range" min="'+min+'" max="'+max+'" step="'+step+'" value="'+v+
+    '" oninput="setCfg(\''+key+'\',this.value)">'+
+    '<span class="cfg-val">'+displayVal+unit+'</span>'+
+    '</div>';
+}
+
+function setCfg(key, val){
+  gameCfg[key] = parseFloat(val);
+  // 更新生存时间显示
+  renderConfigTab();
+}
+
+function keyBindRow(label, bindKey, displayVal){
+  return '<div class="key-bind">'+
+    '<span class="key-bind-label">'+label+'</span>'+
+    '<div class="key-bind-box" data-bind="'+bindKey+'" onclick="startKeyRecording(\''+bindKey+'\',event)">'+
+    (displayVal||'点击设置')+'</div>'+
+    '</div>';
+}
+
+// 按键录制
+function startKeyRecording(bindKey, e){
+  e.stopPropagation();
+  if(recordingKey===bindKey){ recordingKey=null; renderConfigTab(); return; }
+  recordingKey = bindKey;
+  renderConfigTab();
+  // 高亮当前录制的按键框
+  const box = document.querySelector('.key-bind-box[data-bind="'+bindKey+'"]');
+  if(box) box.classList.add('recording');
+}
+
+// 按键捕获处理器（在 keydown 里处理）
+function handleKeyRecord(e){
+  if(!recordingKey) return false;
+  e.preventDefault(); e.stopPropagation();
+
+  const code = e.code;
+  // 绑定单键（自杀和咬）
+  if(recordingKey==='suicide' || recordingKey==='bite'){
+    keyBindings[recordingKey] = [code];
+    gameCfg['KEY_'+(recordingKey==='bite'?'BITE':'SUICIDE')] = keyCodeToLabel(code);
+  } else {
+    // 方向键/跳跃支持双键
+    if(!keyBindings[recordingKey]) keyBindings[recordingKey] = [];
+    if(!keyBindings[recordingKey].includes(code)){
+      keyBindings[recordingKey].push(code);
+      if(keyBindings[recordingKey].length>3) keyBindings[recordingKey].shift();
+    }
+    gameCfg['KEY_'+(recordingKey==='left'?'LEFT':recordingKey==='right'?'RIGHT':'JUMP')] =
+      keyBindings[recordingKey].map(keyCodeToLabel).join(' / ');
+  }
+
+  recordingKey = null;
+  renderConfigTab();
+  return true;
+}
+
+function keyCodeToLabel(code){
+  const map = {
+    ArrowLeft:'Left', ArrowRight:'Right', ArrowUp:'Up', ArrowDown:'Down',
+    Space:'Space', ShiftLeft:'LShift', ShiftRight:'RShift',
+    ControlLeft:'LCtrl', ControlRight:'RCtrl', AltLeft:'LAlt', AltRight:'RAlt',
+    Enter:'Enter', Escape:'Esc', Tab:'Tab', Backspace:'Bksp',
+  };
+  if(map[code]) return map[code];
+  if(code.startsWith('Key')) return code.slice(3);
+  if(code.startsWith('Digit')) return code.slice(5);
+  return code;
+}
+
+// 预设
+function applyPreset(name){
+  if(!PRESETS[name]) return;
+  Object.assign(gameCfg, JSON.parse(JSON.stringify(PRESETS[name])));
+  // 同步 keyBindings
+  if(name==='default'){
+    keyBindings.left=['ArrowLeft','KeyA']; keyBindings.right=['ArrowRight','KeyD'];
+    keyBindings.jump=['ArrowUp','KeyW','Space']; keyBindings.suicide=['KeyK'];
+    gameCfg.KEY_LEFT='A / Left'; gameCfg.KEY_RIGHT='D / Right';
+    gameCfg.KEY_JUMP='W / Up / Space'; gameCfg.KEY_SUICIDE='K';
+  }
+  renderConfigTab();
+}
+
+function resetConfig(){
+  applyPreset('default');
+}
+
+// 导出 config.js
+function exportConfig(){
+  const c = gameCfg;
+  const content =
+'/**\n'+
+' *  虫子大作战 — 全局可调参数配置\n'+
+' *  由编辑器生成\n'+
+' */\n'+
+'const CFG = {\n'+
+'  CANVAS_W: 960, CANVAS_H: 540,\n'+
+'  GRAVITY: '+c.GRAVITY+', MAX_FALL_SPEED: '+c.MAX_FALL_SPEED+',\n'+
+'  PLAYER_W: '+c.PLAYER_W+', PLAYER_H: '+c.PLAYER_H+',\n'+
+'  PLAYER_SPEED: '+c.PLAYER_SPEED+', PLAYER_ACCEL: 800, PLAYER_FRICTION: 600,\n'+
+'  JUMP_VEL_FULL: '+c.JUMP_VEL_FULL+', JUMP_VEL_HALF: '+c.JUMP_VEL_HALF+', JUMP_VEL_EMPTY: '+c.JUMP_VEL_EMPTY+',\n'+
+'  DOUBLE_JUMP_THRESHOLD: '+c.DOUBLE_JUMP_THRESHOLD+', DOUBLE_JUMP_VEL: '+c.DOUBLE_JUMP_VEL+',\n'+
+'  JUMP_BUFFER_MS: 120, COYOTE_MS: 80,\n'+
+'  HUNGER_MAX_START: '+c.HUNGER_MAX_START+', HUNGER_DECAY: '+c.HUNGER_DECAY+',\n'+
+'  HUNGER_FOOD_VALUE: '+c.HUNGER_FOOD_VALUE+', HUNGER_BABY_THRESHOLD: '+c.HUNGER_BABY_THRESHOLD+',\n'+
+'  HUNGER_EAT_BABY_GAIN: '+c.HUNGER_EAT_BABY_GAIN+',\n'+
+'  BABY_INITIAL_W: '+c.BABY_INITIAL_W+', BABY_INITIAL_H: '+c.BABY_INITIAL_H+',\n'+
+'  BABY_GROW_RATE: '+c.BABY_GROW_RATE+', BABY_MAX_SAFE_W: '+c.BABY_MAX_SAFE_W+',\n'+
+'  BABY_FOLLOW_SPEED: 100, BABY_FOOD_RANGE: 150, BABY_EAT_RATIO: 0.3,\n'+
+'  SHOE_W: 48, SHOE_H: 32, SHOE_SPEED: '+c.SHOE_SPEED+', SHOE_GAP_W: 24,\n'+
+'  SPRAY_RADIUS: 120, SPRAY_PULL_FORCE: '+c.SPRAY_PULL_FORCE+',\n'+
+'  PUSHABLE_W: 32, PUSHABLE_H: 32, PUSHABLE_SPEED: 80,\n'+
+'  DESTRUCTIBLE_W: 32, DESTRUCTIBLE_H: 32,\n'+
+'  PRESSURE_W: 48, PRESSURE_H: 12, NEST_W: 40, NEST_H: 40, FRIDGE_W: 56, FRIDGE_H: 80,\n'+
+'  LEVEL_W: 800,\n'+
+'  CUTSCENE_ZOOM_SPEED: '+c.CUTSCENE_ZOOM_SPEED+', CUTSCENE_BUBBLE_DUR: '+c.CUTSCENE_BUBBLE_DUR+', CUTSCENE_SUBTITLE_DUR: '+c.CUTSCENE_SUBTITLE_DUR+',\n'+
+'  WORMHOLE_W: '+c.WORMHOLE_W+', WORMHOLE_H: '+c.WORMHOLE_H+',\n'+
+'  NEXT_LEVEL: '+JSON.stringify(c.NEXT_LEVEL)+',\n'+
+'  KEY_BITE: '+JSON.stringify(keyBindings.bite)+', BITE_RANGE: '+c.BITE_RANGE+', BITE_COOLDOWN: '+c.BITE_COOLDOWN+',\n'+
+'  KEY_LEFT: '+JSON.stringify(keyBindings.left)+',\n'+
+'  KEY_RIGHT: '+JSON.stringify(keyBindings.right)+',\n'+
+'  KEY_JUMP: '+JSON.stringify(keyBindings.jump)+',\n'+
+'  KEY_SUICIDE: '+JSON.stringify(keyBindings.suicide)+',\n'+
+'};\n';
+  const blob = new Blob([content],{type:'text/javascript'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'config.js';
+  a.click();
+}
+
+// ===== 启动 =====
+loadDefaultLevel();
+updateToolUI();
+render();
+updateProps();
+
+// 如果 URL 带 test 参数，自动导入 localStorage 的测试关卡
+if(window.location.search.includes('test')){
+  const saved = localStorage.getItem('buggame_test_level');
+  if(saved){
+    const data = JSON.parse(saved);
+    objects = [];
+    (data.platforms||[]).forEach(p=>addObj('platform',p.x,p.y,p.w,p.h));
+    (data.food||[]).forEach(f=>addObj('food',f.x,f.y,12,12));
+    (data.shoes||[]).forEach(s=>addObj('shoe',s.x,s.y,s.w||48,s.h||32,{patrolL:s.patrolL||s.x-100,patrolR:s.patrolR||s.x+100,keyframes:s.keyframes||[]}));
+    (data.sprays||[]).forEach(s=>addObj('spray',s.x,s.y,20,24,{radius:s.radius||120}));
+    (data.pushables||[]).forEach(p=>addObj('pushable',p.x,p.y,p.w,p.h));
+    (data.destructibles||[]).forEach(d=>addObj('destructible',d.x,d.y,d.w,d.h));
+    (data.pressurePlates||[]).forEach(p=>addObj('pressure',p.x,p.y,p.w,p.h,{_id:p._id,effects:p.effects||[]}));
+    if(data.nest) addObj('nest', data.nest.x, data.nest.y, data.nest.w||40, data.nest.h||40);
+    if(data.fridge) addObj('fridge', data.fridge.x, data.fridge.y, data.fridge.w||56, data.fridge.h||80);
+    render(); updateProps();
+  }
+}
+</script>
+</body>
+</html>

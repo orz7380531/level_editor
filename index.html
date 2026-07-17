@@ -1,0 +1,1725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=960">
+<title>虫子大作战 — 入侵冰箱</title>
+<!-- ============================================================
+     虫子大作战  CGJ 版
+     纯 HTML5 Canvas + 原生 JS，零外部依赖
+     双击 index.html 即可游玩
+     所有用到的键位已做 preventDefault 防浏览器劫持
+     ============================================================ -->
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:#1a1a1a;overflow:hidden;width:100%;height:100%;
+    display:flex;justify-content:center;align-items:center;font-family:'Microsoft YaHei',sans-serif}
+  #wrap{position:relative;width:960px;height:540px}
+  canvas{display:block;image-rendering:pixelated;width:960px;height:540px}
+
+  /* 开始遮罩 */
+  #start{position:absolute;inset:0;background:rgba(0,0,0,.75);
+    display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:10;color:#eee}
+  #start h1{font-size:40px;margin-bottom:8px;letter-spacing:4px;color:#ffcc00}
+  #start p{font-size:15px;color:#aaa;margin:4px 0}
+  #start .btn{display:inline-block;margin-top:24px;padding:12px 40px;
+    background:#ff6b35;color:#fff;font-size:20px;border:2px solid #ff8c5a;cursor:pointer;border-radius:8px}
+  #start .btn:hover{background:#ff8c5a}
+  #start .keys{font-size:12px;color:#777;margin-top:20px;text-align:center;line-height:1.8}
+
+  /* Game Over / Win 遮罩 */
+  #overlay{position:absolute;inset:0;display:none;
+    flex-direction:column;justify-content:center;align-items:center;z-index:10;color:#eee;
+    background:rgba(0,0,0,.85);transition:background .3s}
+  #overlay.death{background:rgba(40,0,0,.88)}
+  #overlay.win{background:rgba(0,30,10,.88)}
+  #overlay h2{font-size:42px;margin-bottom:14px;letter-spacing:3px}
+  #overlay.death h2{color:#FF4444;text-shadow:0 0 20px rgba(255,0,0,.5)}
+  #overlay.win h2{color:#FFD700;text-shadow:0 0 20px rgba(255,215,0,.5)}
+  #overlay .stat{font-size:16px;color:#ccc;margin:4px 0}
+  #overlay .death-reason{font-size:18px;color:#FF6B6B;margin:8px 0 4px;font-weight:bold}
+  #overlay .btn{margin-top:24px;padding:12px 40px;font-size:20px;
+    background:#ff6b35;color:#fff;border:2px solid #ff8c5a;cursor:pointer;border-radius:8px}
+  #overlay .btn:hover{background:#ff8c5a}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cvs"></canvas>
+
+  <!-- 开始界面 -->
+  <div id="start">
+    <h1>虫子大作战</h1>
+    <p>入侵冰箱，填饱肚子，活着到达终点</p>
+    <p style="font-size:13px;color:#888;margin-top:6px">到达冰箱即胜利！避开皮鞋底部和蟑螂药（碰到即死）</p>
+    <button class="btn" id="btnStart">点击开始</button>
+    <div class="keys">
+      WASD / 方向键 = 移动跳跃 &nbsp;|&nbsp;
+      空格 = 跳跃（按住跳更高） &nbsp;|&nbsp;
+      J = 咬食物/破坏障碍物<br>
+      K = 自杀重来
+    </div>
+  </div>
+
+  <!-- 结束界面 -->
+  <div id="overlay">
+    <h2 id="otitle">Game Over</h2>
+    <p class="stat" id="ostat"></p>
+    <p class="stat" id="olegacy"></p>
+    <button class="btn" id="btnRestart">重新开始</button>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   配  置（与 config.js 同步，提交时此文件自包含）
+   ================================================================ */
+const CFG = {
+  CANVAS_W: 960, CANVAS_H: 540,
+  GRAVITY: 1400, MAX_FALL_SPEED: 800,
+  PLAYER_W: 24, PLAYER_H: 20,
+  PLAYER_SPEED: 220, PLAYER_ACCEL: 800, PLAYER_FRICTION: 600,
+  JUMP_VEL_FULL: -520, JUMP_VEL_HALF: -340, JUMP_VEL_EMPTY: -200,
+  DOUBLE_JUMP_THRESHOLD: 50, DOUBLE_JUMP_VEL: -420,
+  JUMP_BUFFER_MS: 120, COYOTE_MS: 80,
+  JUMP_HOLD_GRAVITY_MULT: 0.4,  // 按住跳跃键上升时重力倍率（越小跳越高）
+  JUMP_CUT_FACTOR: 0.35,        // 松开跳跃键时上升速度削减比例
+  HUNGER_MAX_START: 80, HUNGER_DECAY: 0.7,
+  HUNGER_FOOD_VALUE: 10,
+  SHOE_W: 48, SHOE_H: 32, SHOE_SPEED: 60, SHOE_GAP_W: 24,
+  SPRAY_RADIUS: 120, SPRAY_PULL_FORCE: 300,
+  PUSHABLE_W: 32, PUSHABLE_H: 32, PUSHABLE_SPEED: 80,
+  PUSHABLE_FRICTION_GROUND: 0.92, PUSHABLE_FRICTION_AIR: 0.98,
+  DESTRUCTIBLE_W: 32, DESTRUCTIBLE_H: 32,
+  PRESSURE_W: 48, PRESSURE_H: 12,
+  NEST_W: 40, NEST_H: 40, FRIDGE_W: 56, FRIDGE_H: 80,
+  LEVEL_W: 960,          // 单屏16:9，无横向滚动
+  NEXT_LEVEL: 'levels/level2.json', // 下一关文件名，空='' 表示最后一关
+  /* ── 咬技能 ── */
+  KEY_BITE: 'KeyJ', BITE_RANGE: 40, BITE_COOLDOWN: 0.25,
+  /* ── 过场动画 ── */
+  CUTSCENE_ZOOM_SPEED: 2.5, CUTSCENE_BUBBLE_DUR: 2.0, CUTSCENE_SUBTITLE_DUR: 3.0,
+  /* ── 皮鞋关键帧 ── */
+  SHOE_KEYFRAME_DEFAULT_SPEED: 80, // 关键帧模式下的移动速度倍率
+  WORMHOLE_W: 32, WORMHOLE_H: 40,
+  /* ── 按键映射 ── */
+  KEY_LEFT: ['ArrowLeft','KeyA'], KEY_RIGHT: ['ArrowRight','KeyD'],
+  KEY_JUMP: ['ArrowUp','KeyW','Space'], KEY_SUICIDE: 'KeyK',
+};
+
+/* ================================================================
+   工 具 函 数
+   ================================================================ */
+function rectCollide(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
+function lerp(a,b,t){return a+(b-a)*t;}
+function dist(x1,y1,x2,y2){return Math.hypot(x2-x1,y2-y1);}
+
+/* ================================================================
+   图片缓存（供 imgSrc 素材替换使用）
+   ================================================================ */
+const IMG_CACHE = {};
+function loadImage(src){
+  if(!src) return null;
+  if(IMG_CACHE[src]) return IMG_CACHE[src];
+  const img = new Image();
+  img.src = src;
+  IMG_CACHE[src] = img;
+  return img;
+}
+
+/* ================================================================
+   输 入 管 理
+   ================================================================ */
+const IN = { left:false, right:false, jump:false, jumpPressed:false, mouseX:0, mouseY:0, mouseDown:false, suicide:false, bite:false, bitePressed:false };
+function isKey(k,target){
+  if(Array.isArray(target)) return target.includes(k);
+  return k===target;
+}
+document.addEventListener('keydown',e=>{
+  if(isKey(e.code,CFG.KEY_LEFT))   { IN.left=true; e.preventDefault(); }
+  if(isKey(e.code,CFG.KEY_RIGHT))  { IN.right=true; e.preventDefault(); }
+  if(isKey(e.code,CFG.KEY_JUMP))   { if(!IN.jump)IN.jumpPressed=true; IN.jump=true; e.preventDefault(); }
+  if(isKey(e.code,CFG.KEY_BITE))   { if(!IN.bite)IN.bitePressed=true; IN.bite=true; e.preventDefault(); }
+  if(e.code===CFG.KEY_SUICIDE)     { IN.suicide=true; e.preventDefault(); }
+  if(e.code==='Space') e.preventDefault();
+});
+document.addEventListener('keyup',e=>{
+  if(isKey(e.code,CFG.KEY_LEFT))   IN.left=false;
+  if(isKey(e.code,CFG.KEY_RIGHT))  IN.right=false;
+  if(isKey(e.code,CFG.KEY_JUMP)){
+    IN.jump=false;
+    // 变跳：松开跳跃键时削减上升速度（跳得更低）
+    if(PLAYER.jumping && PLAYER.vy < 0){
+      PLAYER.vy *= CFG.JUMP_CUT_FACTOR;
+    }
+    PLAYER.jumping = false;
+  }
+  if(isKey(e.code,CFG.KEY_BITE))   IN.bite=false;
+});
+document.addEventListener('mousemove',e=>{ IN.mouseX=e.clientX; IN.mouseY=e.clientY; });
+document.addEventListener('mousedown',e=>{ if(e.button===0)IN.mouseDown=true; });
+document.addEventListener('mouseup',e=>{ if(e.button===0)IN.mouseDown=false; });
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+/* ================================================================
+   游 戏 状 态
+   ================================================================ */
+const STATE = {
+  phase: 'start',   // start | play | dead | win
+  hunger: 80,
+  maxHunger: 80,
+  foodEaten: 0,
+  atFridge: false,  // 是否已经到达过冰箱
+  score: 0,
+  deathReason: '',    // 死亡原因文本
+  deathFlash: 0,      // 死亡红屏闪烁计时器（1→0）
+  _overlayShown: false, // 遮罩是否已显示（防止重复）
+  // 过场动画
+  cutscene: null,     // null = 无动画，否则 = {type, timer, duration, ...}
+  // 洞口传送
+  wormholes: [],     // 当前关卡的洞口列表（从关卡数据加载）
+  // 多关卡
+  currentLevel: 'levels/level1.json',
+  // 咬技能
+  biteCooldown: 0,      // 咬冷却计时器
+  biteAnimTimer: 0,     // 咬动画计时器（>0时显示咬特效）
+  // 压力板连锁效果
+  activeEffects: [],    // [{targetId, targetRef, effect, start/end values, duration, elapsed, ...}]
+  // 蟑螂药死亡动画
+  sprayDeath: null,     // null 或 { spray, phase: 'attract'|'eat'|'die', timer }
+};
+
+/* ================================================================
+   关 卡 数 据
+   ================================================================ */
+// 加载外部关卡 JSON；失败就用内置默认关卡
+let LEVEL = null;
+function loadLevel(path, cb){
+  fetch(path).then(r=>r.json()).then(l=>{
+    LEVEL = l;
+    // 兼容旧格式：没有的字段补空
+    if(!LEVEL.wormholes) LEVEL.wormholes = [];
+    if(!LEVEL.bgItems) LEVEL.bgItems = [];
+    assignLevelIds();
+    cb();
+  }).catch(()=>{
+    LEVEL = getDefaultLevel();
+    assignLevelIds();
+    cb();
+  });
+}
+function getDefaultLevel(){
+  return {
+    platforms:[
+      // 地面
+      {x:0,y:510,w:960,h:30},
+      // 平台
+      {x:150,y:420,w:100,h:12}, {x:320,y:360,w:80,h:12},
+      {x:480,y:440,w:120,h:12}, {x:650,y:380,w:100,h:12},
+      {x:800,y:430,w:100,h:12},
+      // 冰箱前面小台子
+      {x:870,y:460,w:60,h:12},
+    ],
+    food:[
+      {x:170,y:400},{x:340,y:340},{x:500,y:420},{x:670,y:360},{x:820,y:410},
+    ],
+    shoes:[
+      {x:400,y:478,w:48,h:32,patrolL:300,patrolR:550},
+    ],
+    sprays:[
+      {x:250,y:510,radius:CFG.SPRAY_RADIUS},
+    ],
+    pushables:[
+      {x:550,y:478,w:32,h:32},
+    ],
+    destructibles:[
+      {x:600,y:478,w:32,h:32},
+    ],
+    pressurePlates:[
+      {x:350,y:498,w:48,h:12,targetId:'door1'},
+    ],
+    nest:{x:60,y:470,w:40,h:40},
+    fridge:{x:870,y:430,w:56,h:80},
+    playerStart:{x:60,y:430},
+    wormholes:[],
+    levelExit: null,
+    bgItems:[],
+    bgImgSrc: '',
+  };
+}
+
+/* ================================================================
+   相 机
+   ================================================================ */
+const CAM = { x:0, y:0 };
+function updateCam(px){
+  // 相机水平跟随玩家，让玩家在画面左1/3处
+  const targetX = px - CFG.CANVAS_W/3;
+  const maxX = Math.max(0, CFG.LEVEL_W - CFG.CANVAS_W);
+  CAM.x = clamp(targetX, 0, maxX);
+}
+
+/* ================================================================
+   玩 家
+   ================================================================ */
+const PLAYER = {
+  x:0, y:0, vx:0, vy:0, w:CFG.PLAYER_W, h:CFG.PLAYER_H,
+  grounded:false, doubleJumped:false,
+  jumpBuffer:0, coyote:0,
+  jumping:false,  // 是否正在跳跃上升中（用于变跳）
+  facing:1, // 1=右, -1=左
+  animTimer:0,
+};
+
+function resetPlayer(){
+  const s = LEVEL.playerStart;
+  PLAYER.x = s.x; PLAYER.y = s.y;
+  PLAYER.vx = 0; PLAYER.vy = 0;
+  PLAYER.grounded = false; PLAYER.doubleJumped = false;
+  PLAYER.jumpBuffer = 0; PLAYER.coyote = 0;
+  PLAYER.facing = 1; PLAYER.animTimer = 0;
+}
+
+function updatePlayer(dt){
+  // 记录上一帧Y（用于皮鞋顶部安全判定）
+  PLAYER.prevY = PLAYER.y;
+  // === 水平移动 ===
+  if(IN.left)  PLAYER.vx -= CFG.PLAYER_ACCEL * dt;
+  if(IN.right) PLAYER.vx += CFG.PLAYER_ACCEL * dt;
+
+  // 摩擦力（地面或空中都有阻尼）
+  if(!IN.left && !IN.right){
+    if(Math.abs(PLAYER.vx) < 10) PLAYER.vx = 0;
+    else PLAYER.vx -= Math.sign(PLAYER.vx) * CFG.PLAYER_FRICTION * dt;
+  }
+  PLAYER.vx = clamp(PLAYER.vx, -CFG.PLAYER_SPEED, CFG.PLAYER_SPEED);
+
+  // 面朝方向
+  if(IN.left && !IN.right) PLAYER.facing = -1;
+  if(IN.right && !IN.left) PLAYER.facing = 1;
+
+  // === 跳跃 ===
+  // 土狼时间：离开平台后短暂可跳
+  if(PLAYER.grounded) PLAYER.coyote = CFG.COYOTE_MS/1000;
+  else PLAYER.coyote -= dt;
+
+  // 跳跃缓冲：按键后短暂落地仍触发
+  if(IN.jumpPressed){
+    PLAYER.jumpBuffer = CFG.JUMP_BUFFER_MS/1000;
+    IN.jumpPressed = false;
+  }
+  PLAYER.jumpBuffer -= dt;
+
+  // 触发跳跃
+  const canJump = PLAYER.jumpBuffer>0 && PLAYER.coyote>0;
+  const canDouble = !PLAYER.doubleJumped && !PLAYER.grounded
+    && PLAYER.jumpBuffer>0 && STATE.hunger >= CFG.DOUBLE_JUMP_THRESHOLD;
+
+  if(canJump && PLAYER.grounded){
+    // 地面跳跃：根据饱腹度计算跳跃力
+    const t = STATE.hunger / 100;
+    const jv = lerp(CFG.JUMP_VEL_EMPTY, CFG.JUMP_VEL_FULL, t);
+    PLAYER.vy = jv;
+    PLAYER.grounded = false;
+    PLAYER.doubleJumped = false;
+    PLAYER.jumpBuffer = 0;
+    PLAYER.coyote = 0;
+    PLAYER.jumping = true; // 标记正在跳跃上升中（用于变跳）
+  } else if(canDouble){
+    // 二段跳
+    PLAYER.vy = CFG.DOUBLE_JUMP_VEL;
+    PLAYER.doubleJumped = true;
+    PLAYER.jumpBuffer = 0;
+    PLAYER.jumping = true;
+  }
+
+  // === 重力（变跳：按住跳跃键上升时低重力 → 跳更高） ===
+  let gravityMult = 1;
+  if(PLAYER.jumping && IN.jump && PLAYER.vy < 0){
+    gravityMult = CFG.JUMP_HOLD_GRAVITY_MULT; // 按住时低重力
+  }
+  PLAYER.vy += CFG.GRAVITY * gravityMult * dt;
+  if(PLAYER.vy > CFG.MAX_FALL_SPEED) PLAYER.vy = CFG.MAX_FALL_SPEED;
+  if(PLAYER.vy >= 0) PLAYER.jumping = false; // 开始下落 → 结束变跳
+
+  // === 水平碰撞 ===
+  PLAYER.x += PLAYER.vx * dt;
+  const allSolids = getAllSolids();
+  for(const s of allSolids){
+    if(rectCollide(PLAYER, s)){
+      // 可推动物：传递动量（推它），而不是生硬阻挡
+      if(s._id && s._id.startsWith('pushable_')){
+        if(PLAYER.vx > 0){ PLAYER.x = s.x - PLAYER.w; s.vx = (s.vx||0) + PLAYER.vx; }
+        else if(PLAYER.vx < 0){ PLAYER.x = s.x + s.w; s.vx = (s.vx||0) + PLAYER.vx; }
+      } else {
+        if(PLAYER.vx > 0){ PLAYER.x = s.x - PLAYER.w; PLAYER.vx = 0; }
+        else if(PLAYER.vx < 0){ PLAYER.x = s.x + s.w; PLAYER.vx = 0; }
+      }
+    }
+  }
+  // 关卡边界
+  PLAYER.x = clamp(PLAYER.x, 0, CFG.LEVEL_W - PLAYER.w);
+
+  // === 垂直碰撞 ===
+  PLAYER.y += PLAYER.vy * dt;
+  PLAYER.grounded = false;
+  for(const s of allSolids){
+    if(rectCollide(PLAYER, s)){
+      if(s._id && s._id.startsWith('pushable_')){
+        if(PLAYER.vy > 0){ PLAYER.y = s.y - PLAYER.h; PLAYER.vy = 0; PLAYER.grounded = true; PLAYER.doubleJumped = false; }
+        else if(PLAYER.vy < 0){ PLAYER.y = s.y + s.h; PLAYER.vy = 0; }
+      } else {
+        if(PLAYER.vy > 0){ PLAYER.y = s.y - PLAYER.h; PLAYER.vy = 0; PLAYER.grounded = true; PLAYER.doubleJumped = false; }
+        else if(PLAYER.vy < 0){ PLAYER.y = s.y + s.h; PLAYER.vy = 0; }
+      }
+    }
+  }
+  // 掉出关卡
+  if(PLAYER.y > CFG.CANVAS_H + 60){ killPlayer('掉出地图'); }
+
+  // 动画计时
+  PLAYER.animTimer += dt;
+}
+
+/* ================================================================
+   饱 腹 度 系 统
+   ================================================================ */
+function updateHunger(dt){
+  STATE.hunger -= CFG.HUNGER_DECAY * dt;
+  if(STATE.hunger <= 0){
+    STATE.hunger = 0;
+    // 饱腹度归零 → 在巢穴重生（不是 Game Over）
+    hungerRespawn();
+  }
+}
+function addHunger(amt){ STATE.hunger = Math.min(STATE.hunger + amt, 100); }
+
+/* ================================================================
+   关 卡 对 象 ID 系 统（供压力板效果引用）
+   ================================================================ */
+// 为关卡中所有可被引用的物体分配 _id（已有 ID 的不覆盖，保留编辑器分配的）
+function assignLevelIds(){
+  (LEVEL.platforms||[]).forEach((p,i)=>{ if(!p._id) p._id='platform_'+i; });
+  (LEVEL.food||[]).forEach((f,i)=>{ if(!f._id) f._id='food_'+i; });
+  (LEVEL.shoes||[]).forEach((s,i)=>{ if(!s._id) s._id='shoe_'+i; });
+  (LEVEL.sprays||[]).forEach((s,i)=>{ if(!s._id) s._id='spray_'+i; });
+  (LEVEL.pushables||[]).forEach((p,i)=>{ if(!p._id) p._id='pushable_'+i; if(p.vx==null)p.vx=0; if(p.vy==null)p.vy=0; });
+  (LEVEL.destructibles||[]).forEach((d,i)=>{ if(!d._id) d._id='destructible_'+i; });
+  (LEVEL.pressurePlates||[]).forEach((pp,i)=>{ if(!pp._id) pp._id='pressure_'+i; });
+  if(LEVEL.nest && !LEVEL.nest._id) LEVEL.nest._id = 'nest';
+  if(LEVEL.fridge && !LEVEL.fridge._id) LEVEL.fridge._id = 'fridge';
+}
+// 根据 _id 找到关卡中的物体引用（返回引用，可直接修改）
+function findObjectById(id){
+  if(!id) return null;
+  const arrs = ['platforms','food','shoes','sprays','pushables','destructibles','pressurePlates'];
+  for(const key of arrs){
+    const list = LEVEL[key]||[];
+    for(const obj of list){ if(obj._id===id) return obj; }
+  }
+  if(LEVEL.nest && LEVEL.nest._id===id) return LEVEL.nest;
+  if(LEVEL.fridge && LEVEL.fridge._id===id) return LEVEL.fridge;
+  return null;
+}
+// 从关卡中删除指定 _id 的物体
+function removeObjectById(id){
+  if(!id) return;
+  const arrs = ['platforms','food','shoes','sprays','pushables','destructibles','pressurePlates'];
+  for(const key of arrs){
+    const list = LEVEL[key]||[];
+    for(let i=list.length-1;i>=0;i--){
+      if(list[i]._id===id){ list.splice(i,1); return; }
+    }
+  }
+}
+
+/* ================================================================
+   食 物 — 只有被"咬"才能吃
+   ================================================================ */
+
+/* ================================================================
+   咬 技 能 系 统
+   按 J 键咬前方区域 → 吃食物 / 破坏障碍物 / 触发压力板效果
+   ================================================================ */
+function checkBite(dt){
+  STATE.biteCooldown -= dt;
+  STATE.biteAnimTimer -= dt;
+  if(!IN.bitePressed) return;
+  IN.bitePressed = false;
+  if(STATE.biteCooldown > 0) return; // 冷却中
+  STATE.biteCooldown = CFG.BITE_COOLDOWN;
+  STATE.biteAnimTimer = 0.15; // 咬动画持续 0.15 秒
+
+  // 咬的范围：玩家前方矩形
+  const bx = PLAYER.facing > 0 ? PLAYER.x + PLAYER.w : PLAYER.x - CFG.BITE_RANGE;
+  const by = PLAYER.y - 6;
+  const bw = CFG.BITE_RANGE;
+  const bh = PLAYER.h + 12;
+  const biteRect = {x:bx, y:by, w:bw, h:bh};
+
+  // 1) 检查食物
+  for(let i=LEVEL.food.length-1; i>=0; i--){
+    const f = LEVEL.food[i];
+    const fr = {x:f.x, y:f.y, w:12, h:12};
+    if(rectCollide(biteRect, fr)){
+      addHunger(CFG.HUNGER_FOOD_VALUE);
+      STATE.foodEaten++;
+      LEVEL.food.splice(i,1);
+      return; // 一次咬只能处理一个对象
+    }
+  }
+
+  // 2) 检查可破坏障碍物
+  for(let i=(LEVEL.destructibles||[]).length-1; i>=0; i--){
+    const d = LEVEL.destructibles[i];
+    if(!d.hidden && rectCollide(biteRect, d)){
+      LEVEL.destructibles.splice(i,1);
+      return;
+    }
+  }
+
+  // 3) 检查压力板 → 触发连锁效果
+  for(const pp of (LEVEL.pressurePlates||[])){
+    if(rectCollide(biteRect, pp)){
+      triggerPressureEffects(pp);
+      return;
+    }
+  }
+}
+
+// 触发压力板的所有连锁效果
+function triggerPressureEffects(pp){
+  if(!pp.effects || pp.effects.length===0) return;
+  pp.activated = true;
+
+  // === 先处理皮鞋相关效果（直接操作，不走动画系统） ===
+  const shoeEffects = pp.effects.filter(e=>
+    e.effect==='shoe_pause' || e.effect==='shoe_resume' || e.effect==='shoe_reverse' || e.effect==='shoe_goto'
+  );
+  for(const eff of shoeEffects){
+    const target = findObjectById(eff.targetId);
+    if(!target || !target._id || !target._id.startsWith('shoe_')) continue;
+    if(eff.effect==='shoe_pause'){
+      target._paused = true;
+    } else if(eff.effect==='shoe_resume'){
+      target._paused = false;
+    } else if(eff.effect==='shoe_reverse'){
+      target.dir = -(target.dir||1);
+      if(target.keyframes && target.keyframes.length >= 2){
+        // 关键帧模式：反转关键帧顺序
+        target._kfIdx = target.keyframes.length - 1 - (target._kfIdx||0);
+        target._kfTime = 0;
+      }
+    } else if(eff.effect==='shoe_goto'){
+      // 跳转到指定关键帧索引
+      if(target.keyframes && target.keyframes.length > (eff.kfIndex||0)){
+        target._kfIdx = eff.kfIndex||0;
+        target._kfTime = 0;
+        target.x = target.keyframes[target._kfIdx].x;
+        target.y = target.keyframes[target._kfIdx].y;
+      }
+    }
+  }
+
+  // 过滤掉已处理的皮鞋效果
+  const remaining = pp.effects.filter(e=>
+    e.effect!=='shoe_pause' && e.effect!=='shoe_resume' && e.effect!=='shoe_reverse' && e.effect!=='shoe_goto'
+  );
+  if(remaining.length === 0) return;
+
+  // 先检查是否有过场动画效果，有则播放（冻结玩家）
+  const animEffects = remaining.filter(e=>
+    e.effect==='zoom' || e.effect==='bubble' || e.effect==='subtitle'
+  );
+  if(animEffects.length > 0){
+    startCutscene(animEffects[0]);
+    pp._pendingEffects = remaining.filter(e=>
+      e.effect!=='zoom' && e.effect!=='bubble' && e.effect!=='subtitle'
+    );
+    return;
+  }
+
+  // 无动画效果：直接应用（原有逻辑）
+  for(const eff of remaining){
+    const target = findObjectById(eff.targetId);
+    if(!target) continue;
+    const anim = {
+      targetId: eff.targetId,
+      targetRef: target,
+      effect: eff.effect||'move',
+      startX: target.x, startY: target.y,
+      startW: target.w, startH: target.h,
+      startAngle: target.angle || 0,
+      endX: eff.targetX!=null ? eff.targetX : target.x,
+      endY: eff.targetY!=null ? eff.targetY : target.y,
+      endW: eff.targetW!=null ? eff.targetW : target.w,
+      endH: eff.targetH!=null ? eff.targetH : target.h,
+      endAngle: eff.targetAngle!=null ? eff.targetAngle : (target.angle||0),
+      duration: Math.max(0.2, eff.duration||1),
+      elapsed: 0,
+      shouldRemove: eff.effect==='disappear',
+      shouldAppear: eff.effect==='appear',
+      alpha: 1,
+    };
+    if(anim.shouldAppear){
+      target.hidden = false;
+      target.alpha = 0;
+    }
+    STATE.activeEffects.push(anim);
+  }
+}
+
+// 每帧更新正在执行的效果动画（带碰撞体积）
+function updatePressureEffects(dt){
+  for(let i=STATE.activeEffects.length-1; i>=0; i--){
+    const anim = STATE.activeEffects[i];
+    const tgt = anim.targetRef;
+    if(!tgt){ STATE.activeEffects.splice(i,1); continue; }
+
+    anim.elapsed += dt;
+    const t = Math.min(anim.elapsed / Math.max(0.01,anim.duration), 1);
+    // easeInOutQuad 缓动
+    const eased = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+
+    if(anim.effect==='disappear'){
+      tgt.alpha = 1 - eased;
+      if(t>=1){
+        tgt.hidden = true; tgt.alpha = 0;
+        // 如果是可破坏物，直接移除
+        const di = (LEVEL.destructibles||[]).indexOf(tgt);
+        if(di>=0) LEVEL.destructibles.splice(di,1);
+        else {
+          // 平台等隐藏但不删除
+          tgt._collideDisabled = true;
+        }
+        STATE.activeEffects.splice(i,1);
+      }
+    } else if(anim.effect==='appear'){
+      tgt.alpha = eased;
+      tgt._collideDisabled = false;
+      if(t>=1){
+        tgt.alpha = 1; tgt.hidden = false;
+        STATE.activeEffects.splice(i,1);
+      }
+    } else {
+      // move / scale / rotate（保留碰撞体积）
+      tgt.x = lerp(anim.startX, anim.endX, eased);
+      tgt.y = lerp(anim.startY, anim.endY, eased);
+      tgt.w = lerp(anim.startW, anim.endW, eased);
+      tgt.h = lerp(anim.startH, anim.endH, eased);
+      tgt.angle = lerp(anim.startAngle, anim.endAngle, eased);
+      if(t>=1){
+        tgt.x=anim.endX; tgt.y=anim.endY;
+        tgt.w=anim.endW; tgt.h=anim.endH;
+        tgt.angle=anim.endAngle;
+        STATE.activeEffects.splice(i,1);
+      }
+    }
+  }
+}
+
+/* ================================================================
+   敌 人 碰 撞 & 更 新
+   ================================================================ */
+function updateEnemies(dt){
+  // 皮鞋
+  for(const s of (LEVEL.shoes||[])){
+    // 如果皮鞋被暂停（压力板触发），不移动
+    if(s._paused) continue;
+
+    // === 关键帧模式 ===
+    if(s.keyframes && s.keyframes.length >= 2){
+      if(s._kfTime == null) s._kfTime = 0;
+      if(s._kfIdx == null) s._kfIdx = 0;
+      s._kfTime += dt;
+
+      const kfs = s.keyframes;
+      const cur = kfs[s._kfIdx];
+      const next = kfs[(s._kfIdx + 1) % kfs.length];
+      const segDur = Math.max(0.1, (next.t||0) - (cur.t||0));
+
+      if(s._kfTime >= segDur){
+        // 到达下一个关键帧
+        s._kfIdx = (s._kfIdx + 1) % kfs.length;
+        s._kfTime = 0;
+        s.x = kfs[s._kfIdx].x;
+        s.y = kfs[s._kfIdx].y;
+      } else {
+        // 在两个关键帧之间插值
+        const t = s._kfTime / segDur;
+        const ease = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+        s.x = lerp(cur.x, next.x, ease);
+        s.y = lerp(cur.y, next.y, ease);
+      }
+    } else {
+      // === 传统巡逻模式（向后兼容） ===
+      s.x += (s.dir||1) * CFG.SHOE_SPEED * dt;
+      if(s.x <= (s.patrolL||s.x-100)) s.dir = 1;
+      if(s.x + s.w >= (s.patrolR||s.x+100)) s.dir = -1;
+    }
+
+    // 皮鞋与可推动物碰撞 → 转向
+    for(const p of (LEVEL.pushables||[])){
+      if(rectCollide(s, p)){
+        s.dir = -s.dir;
+        s.x += s.dir * CFG.SHOE_SPEED * dt * 2;
+        break;
+      }
+    }
+
+    // 皮鞋与平台/可破坏物碰撞 → 转向
+    for(const plat of (LEVEL.platforms||[])){
+      if(rectCollide(s, plat)){ s.dir = -s.dir; s.x += s.dir * CFG.SHOE_SPEED * dt * 2; break; }
+    }
+    for(const d of (LEVEL.destructibles||[])){
+      if(!d.hidden && rectCollide(s, d)){ s.dir = -s.dir; s.x += s.dir * CFG.SHOE_SPEED * dt * 2; break; }
+    }
+
+    // 碰撞检测：只有碰到皮鞋底部（玩家在鞋下方）才死亡
+    const gapW = Math.max(8, s.w * 0.4);
+    const halfW = (s.w - gapW)/2;
+    const leftPart  = {x:s.x, y:s.y, w:halfW, h:s.h};
+    const rightPart = {x:s.x+halfW+gapW, y:s.y, w:halfW, h:s.h};
+    if(rectCollide(PLAYER, leftPart) || rectCollide(PLAYER, rightPart)){
+      // 判断：玩家头部碰到皮鞋底部（玩家在鞋下方，向上跳碰到鞋底）→ 死
+      //        玩家脚部碰到皮鞋顶部（站在鞋上）→ 安全
+      const playerHead = PLAYER.y;               // 玩家头顶 Y
+      const playerFeet = PLAYER.y + PLAYER.h;    // 玩家脚底 Y
+      const shoeTop   = s.y;                    // 皮鞋顶部 Y
+      const shoeBottom = s.y + s.h;             // 皮鞋底部 Y
+      // 玩家在皮鞋下方（头顶碰到或超过鞋底）→ 死
+      const hittingBottom = playerHead + 4 >= shoeBottom;
+      // 玩家从上方落在皮鞋顶部 → 安全站立
+      const landingOnTop = PLAYER.vy >= 0 && playerFeet >= shoeTop && playerFeet <= shoeTop + 14;
+      if(landingOnTop){
+        // 安全：站在皮鞋上，随鞋移动
+        PLAYER.y = shoeTop - PLAYER.h;
+        PLAYER.vy = 0;
+        PLAYER.grounded = true;
+      } else if(hittingBottom){
+        killPlayer('被皮鞋踩死了');
+      }
+      // 侧面碰撞：玩家身体与鞋同一高度 → 死
+      if(!landingOnTop && !hittingBottom){
+        const overlap = Math.min(
+          Math.abs(PLAYER.x + PLAYER.w - s.x),
+          Math.abs(s.x + s.w - PLAYER.x)
+        );
+        if(overlap < PLAYER.h * 0.6) killPlayer('被皮鞋挤死了');
+      }
+    }
+  }
+  // 蟑螂药：进入范围触发死亡动画
+  for(const sp of (LEVEL.sprays||[])){
+    const cx = sp.x, cy = sp.y, r = sp.radius||CFG.SPRAY_RADIUS;
+    const d = dist(PLAYER.x+PLAYER.w/2, PLAYER.y+PLAYER.h/2, cx, cy);
+    if(d < r && STATE.sprayDeath === null){
+      STATE.sprayDeath = { spray: sp, phase: 'attract', timer: 0 };
+    }
+  }
+}
+
+/* ================================================================
+   场 景 物 体 碰 撞
+   ================================================================ */
+function updatePushables(dt){
+  const colliders = getAllPushableColliders();
+  for(const p of (LEVEL.pushables||[])){
+    if(p.vx == null) p.vx = 0;
+    if(p.vy == null) p.vy = 0;
+
+    // 重力
+    p.vy += CFG.GRAVITY * dt;
+    if(p.vy > CFG.MAX_FALL_SPEED) p.vy = CFG.MAX_FALL_SPEED;
+
+    // === 水平移动 ===
+    p.x += p.vx * dt;
+    for(const s of colliders){
+      if(s === p) continue;
+      // 用简化 AABB 检测（spray 传入的是小矩形）
+      const sRect = {x:s.x||s.x, y:s.y||s.y, w:s.w||20, h:s.h||20};
+      if(rectCollide(p, sRect)){
+        if(p.vx > 0){ p.x = sRect.x - p.w; p.vx = 0; }
+        else if(p.vx < 0){ p.x = sRect.x + sRect.w; p.vx = 0; }
+      }
+    }
+
+    // === 垂直移动 ===
+    p.y += p.vy * dt;
+    p.grounded = false;
+    for(const s of colliders){
+      if(s === p) continue;
+      const sRect = {x:s.x||s.x, y:s.y||s.y, w:s.w||20, h:s.h||20};
+      if(rectCollide(p, sRect)){
+        if(p.vy > 0){ p.y = sRect.y - p.h; p.vy = 0; p.grounded = true; }
+        else if(p.vy < 0){ p.y = sRect.y + sRect.h; p.vy = 0; }
+      }
+    }
+
+    // === 摩擦力 ===
+    if(p.grounded){
+      p.vx *= CFG.PUSHABLE_FRICTION_GROUND;
+      if(Math.abs(p.vx) < 5) p.vx = 0;
+    } else {
+      p.vx *= CFG.PUSHABLE_FRICTION_AIR;
+    }
+
+    // 关卡边界
+    p.x = clamp(p.x, 0, CFG.LEVEL_W - p.w);
+  }
+}
+function checkPushableSolid(p, solids){
+  for(const s of solids){ if(s!==p && rectCollide(p,s)) return true; }
+  return false;
+}
+function checkPressurePlates(){
+  for(const pp of (LEVEL.pressurePlates||[])){
+    let onIt = false;
+    // 玩家
+    if(rectCollide(PLAYER, pp)) onIt = true;
+    // 可推动物
+    for(const p of (LEVEL.pushables||[])){
+      if(rectCollide(p, pp)){ onIt = true; break; }
+    }
+    pp.activated = onIt;
+    // 踩上去触发效果（只在刚踩上那一刻触发，避免每帧重复触发）
+    if(onIt && !pp._lastOn){
+      triggerPressureEffects(pp);
+    }
+    pp._lastOn = onIt;
+  }
+}
+function checkDestructibles(){
+  // 可破坏物：作为固体平台站立，只有咬（J键）才能破坏
+  for(const d of (LEVEL.destructibles||[])){
+    if(d.hidden) continue;
+    if(rectCollide(PLAYER, d)){
+      if(PLAYER.vy > 0){
+        // 站在上面
+        PLAYER.y = d.y - PLAYER.h;
+        PLAYER.vy = 0;
+        PLAYER.grounded = true;
+      }
+    }
+  }
+}
+function getAllSolids(){
+  const solids = [];
+  for(const p of (LEVEL.platforms||[])){
+    if(!p.hidden && !p._collideDisabled) solids.push(p);
+  }
+  for(const d of (LEVEL.destructibles||[])){
+    if(!d.hidden && !d._collideDisabled) solids.push(d);
+  }
+  for(const p of (LEVEL.pushables||[])){
+    if(!p.hidden && !p._collideDisabled) solids.push(p);
+  }
+  return solids;
+}
+
+/* 可推动物碰撞检测用的扩展固体列表（还包含皮鞋、蟑螂药、食物、压力板） */
+function getAllPushableColliders(){
+  const solids = getAllSolids();
+  for(const s of (LEVEL.shoes||[])){ solids.push(s); }
+  for(const s of (LEVEL.sprays||[])){ solids.push({x:s.x-10,y:s.y-10,w:20,h:20}); }
+  for(const f of (LEVEL.food||[])){ solids.push({x:f.x,y:f.y,w:12,h:12}); }
+  for(const pp of (LEVEL.pressurePlates||[])){ solids.push({x:pp.x,y:pp.y,w:pp.w,h:pp.h}); }
+  return solids;
+}
+
+/* ================================================================
+   目 标 检 测（冰箱 / 巢穴）
+   ================================================================ */
+function checkGoals(){
+  // 到达冰箱即胜利（不用来回回巢穴了）
+  if(LEVEL.fridge && rectCollide(PLAYER, LEVEL.fridge)){
+    STATE.phase = 'win';
+    STATE.score += 200;
+    showOverlay(true);
+  }
+}
+
+/* ================================================================
+   死 亡 / 结 束
+   ================================================================ */
+function killPlayer(reason){
+  if(STATE.phase !== 'play') return;
+  STATE.phase = 'dead';
+  STATE.deathReason = reason||'未知原因';
+  STATE.deathFlash = 1.0;      // 启动死亡红屏
+  STATE._overlayShown = false;  // 遮罩尚未显示
+}
+
+/* ================================================================
+   蟑 螂 药 死 亡 动 画
+   ================================================================ */
+function updateSprayDeath(dt){
+  const sd = STATE.sprayDeath;
+  if(!sd) return;
+  const sp = sd.spray;
+  sd.timer += dt;
+
+  if(sd.phase === 'attract'){
+    // 玩家被强制向蟑螂药移动
+    const px = PLAYER.x + PLAYER.w/2, py = PLAYER.y + PLAYER.h/2;
+    const dx = sp.x - px, dy = sp.y - py;
+    const d = Math.hypot(dx, dy) || 1;
+    PLAYER.vx = (dx/d) * 120;
+    PLAYER.vy = (dy/d) * 120;
+    PLAYER.x += PLAYER.vx * dt;
+    PLAYER.y += PLAYER.vy * dt;
+    if(sd.timer >= 1.2){
+      sd.phase = 'eat';
+      sd.timer = 0;
+    }
+  } else if(sd.phase === 'eat'){
+    // 玩家停在蟑螂药位置，身体抖动
+    PLAYER.x = sp.x - PLAYER.w/2 + (Math.random()-0.5)*4;
+    PLAYER.y = sp.y - PLAYER.h/2 + (Math.random()-0.5)*4;
+    PLAYER.vx = 0; PLAYER.vy = 0;
+    if(sd.timer >= 0.8){
+      sd.phase = 'die';
+      sd.timer = 0;
+    }
+  } else if(sd.phase === 'die'){
+    STATE.sprayDeath = null;
+    killPlayer('被蟑螂药毒死了');
+  }
+}
+function showOverlay(won){
+  const ov = document.getElementById('overlay');
+  ov.style.display = 'flex';
+  ov.className = won ? 'win' : 'death';
+  document.getElementById('otitle').textContent = won ? '胜利！入侵冰箱成功！' : 'GAME OVER';
+  document.getElementById('ostat').textContent =
+    '吃掉了 ' + STATE.foodEaten + ' 份食物  |  得分: ' + STATE.score;
+  const legacyEl = document.getElementById('olegacy');
+  if(won){
+    legacyEl.innerHTML = '';
+  } else {
+    legacyEl.innerHTML = '<span class="death-reason">死因: ' + (STATE.deathReason||'未知') + '</span>';
+  }
+}
+function saveLevelOriginals(){
+  LEVEL._origFood = JSON.parse(JSON.stringify(LEVEL.food));
+  LEVEL._origDestructibles = JSON.parse(JSON.stringify(LEVEL.destructibles||[]));
+  LEVEL._origPushables = JSON.parse(JSON.stringify(LEVEL.pushables||[]));
+  LEVEL._origShoes = JSON.parse(JSON.stringify(LEVEL.shoes||[]));
+}
+function restoreLevelOriginals(){
+  if(LEVEL._origFood) LEVEL.food = JSON.parse(JSON.stringify(LEVEL._origFood));
+  if(LEVEL._origDestructibles) LEVEL.destructibles = JSON.parse(JSON.stringify(LEVEL._origDestructibles));
+  if(LEVEL._origPushables) LEVEL.pushables = JSON.parse(JSON.stringify(LEVEL._origPushables));
+  if(LEVEL._origShoes) LEVEL.shoes = JSON.parse(JSON.stringify(LEVEL._origShoes));
+}
+function restartGame(){
+  STATE.phase = 'play';
+  STATE.hunger = CFG.HUNGER_MAX_START;
+  STATE.maxHunger = 100;
+  STATE.foodEaten = 0; STATE.atFridge = false; STATE.score = 0;
+  STATE.activeEffects = []; STATE.biteCooldown = 0; STATE.biteAnimTimer = 0;
+  STATE.deathFlash = 0; STATE._overlayShown = false;
+  STATE.sprayDeath = null;
+  restoreLevelOriginals();
+  assignLevelIds(); // 重新分配 ID（因为恢复后数组变了）
+  // 重置压力板踩踏状态
+  (LEVEL.pressurePlates||[]).forEach(pp=>{ pp._lastOn = false; pp.activated = false; });
+  resetPlayer();
+  lastTime = performance.now();
+  document.getElementById('overlay').style.display = 'none';
+}
+// 首次启动
+function startGame(){
+  document.getElementById('start').style.display = 'none';
+  saveLevelOriginals();
+  restartGame();
+}
+
+/* ================================================================
+   渲  染（占位像素美术）
+   ================================================================ */
+function drawBlock(ctx,x,y,w,h,color,dark){
+  ctx.fillStyle = color;
+  ctx.fillRect(x,y,w,h);
+  ctx.fillStyle = dark;
+  ctx.fillRect(x,y,w,2); ctx.fillRect(x,y,2,h); // 亮边
+}
+function drawPlayer(ctx){
+  const p = PLAYER, cx = p.x-CAM.x, cy = p.y-CAM.y;
+  // 身体
+  const bodyColor = STATE.hunger < 30 ? '#8B4513' : (STATE.hunger < 60 ? '#A0522D' : '#CD853F');
+  ctx.fillStyle = bodyColor;
+  ctx.beginPath(); ctx.ellipse(cx+p.w/2, cy+p.h/2+2, p.w/2, p.h/2, 0, 0, Math.PI*2); ctx.fill();
+  // 眼睛
+  ctx.fillStyle = '#fff';
+  const eyeOff = p.facing>0 ? 4 : -4;
+  ctx.beginPath(); ctx.arc(cx+p.w/2+eyeOff, cy+p.h/2-2, 3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(cx+p.w/2+eyeOff+p.facing, cy+p.h/2-2, 1.5, 0, Math.PI*2); ctx.fill();
+  // 触角
+  ctx.strokeStyle = '#5C3A1E'; ctx.lineWidth = 1.5;
+  const bob = Math.sin(p.animTimer*8)*1.5;
+  ctx.beginPath(); ctx.moveTo(cx+p.w/2-4, cy+2); ctx.lineTo(cx+p.w/2-8, cy-6+bob); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx+p.w/2+4, cy+2); ctx.lineTo(cx+p.w/2+8, cy-6-bob); ctx.stroke();
+  // 腿（走路动画）
+  ctx.strokeStyle = '#3E2723'; ctx.lineWidth = 2;
+  const legPhase = Math.sin(p.animTimer*12)*(p.grounded?1:0.3);
+  for(let i=0;i<3;i++){
+    const lx = cx+p.w*0.25 + i*p.w*0.25;
+    ctx.beginPath(); ctx.moveTo(lx, cy+p.h-1);
+    ctx.lineTo(lx + legPhase*(i%2?1:-1)*3, cy+p.h+6); ctx.stroke();
+  }
+}
+function drawShoe(ctx, s){
+  const sx = s.x-CAM.x, sy = s.y-CAM.y;
+  // imgSrc 素材替换
+  if(s.imgSrc){
+    const img = loadImage(s.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, sx, sy, s.w, s.h);
+      return;
+    }
+  }
+  // 间隙按皮鞋宽度自动缩放（最小8px）
+  const gapW = Math.max(8, s.w * 0.4);
+  const halfW = (s.w - gapW)/2;
+  // 左半
+  ctx.fillStyle = '#4E342E'; ctx.fillRect(sx,sy,halfW,s.h);
+  ctx.fillStyle = '#3E2723'; ctx.fillRect(sx,sy+2,halfW,4);
+  // 右半
+  ctx.fillStyle = '#4E342E'; ctx.fillRect(sx+halfW+gapW,sy,halfW,s.h);
+  ctx.fillStyle = '#3E2723'; ctx.fillRect(sx+halfW+gapW,sy+2,halfW,4);
+  // 空隙标记
+  ctx.fillStyle = 'rgba(0,255,0,0.3)';
+  ctx.fillRect(sx+halfW, sy, gapW, s.h);
+}
+function drawSpray(ctx, sp){
+  const sx = sp.x-CAM.x, sy = sp.y-CAM.y, r = sp.radius||CFG.SPRAY_RADIUS;
+  // 吸引范围（呼吸式闪烁）
+  const alpha = 0.12 + Math.sin(performance.now()/500)*0.06;
+  ctx.fillStyle = 'rgba(255,50,50,'+alpha+')';
+  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,80,80,'+(0.3+Math.sin(performance.now()/500)*0.15)+')';
+  ctx.lineWidth = 2; ctx.setLineDash([6,6]);
+  ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+  // 罐子本体
+  ctx.fillStyle = '#C62828'; ctx.fillRect(sx-8, sy-16, 16, 24);
+  ctx.fillStyle = '#BDBDBD'; ctx.fillRect(sx-10, sy-20, 20, 6);
+  ctx.fillStyle = '#FFEB3B'; ctx.fillRect(sx-2, sy-20, 4, 6); // 喷嘴
+}
+function drawFood(ctx, f){
+  const fx = f.x-CAM.x, fy = f.y-CAM.y;
+  // imgSrc 素材替换
+  if(f.imgSrc){
+    const img = loadImage(f.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, fx, fy, f.w||12, f.h||12);
+      return;
+    }
+  }
+  ctx.fillStyle = '#4CAF50'; ctx.beginPath(); ctx.arc(fx+6, fy+6, 6, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#81C784'; ctx.beginPath(); ctx.arc(fx+4, fy+4, 2.5, 0, Math.PI*2); ctx.fill();
+}
+function drawPushable(ctx, p){
+  const px = p.x-CAM.x, py = p.y-CAM.y;
+  // imgSrc 素材替换
+  if(p.imgSrc){
+    const img = loadImage(p.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, px, py, p.w, p.h);
+      return;
+    }
+  }
+  ctx.fillStyle = '#757575'; ctx.fillRect(px,py,p.w,p.h);
+  ctx.fillStyle = '#9E9E9E'; ctx.fillRect(px+2,py+2,p.w-4,p.h-4);
+  ctx.strokeStyle = '#424242'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px+p.w,py+p.h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px+p.w,py); ctx.lineTo(px,py+p.h); ctx.stroke();
+}
+function drawDestructible(ctx, d){
+  const dx = d.x-CAM.x, dy = d.y-CAM.y;
+  // imgSrc 素材替换
+  if(d.imgSrc){
+    const img = loadImage(d.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, dx, dy, d.w, d.h);
+      return;
+    }
+  }
+  ctx.fillStyle = '#8D6E63'; ctx.fillRect(dx,dy,d.w,d.h);
+  ctx.fillStyle = '#5D4037'; ctx.fillRect(dx+2,dy+2,d.w-4,d.h-4);
+  ctx.strokeStyle = '#3E2723'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(dx+4,dy+4); ctx.lineTo(dx+d.w/2,dy+d.h/2); ctx.lineTo(dx+d.w-4,dy+4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(dx+4,dy+d.h-4); ctx.lineTo(dx+d.w/2,dy+d.h/2); ctx.lineTo(dx+d.w-4,dy+d.h-4); ctx.stroke();
+}
+function drawPressurePlate(ctx, pp){
+  const px = pp.x-CAM.x, py = pp.y-CAM.y;
+  // imgSrc 素材替换
+  if(pp.imgSrc){
+    const img = loadImage(pp.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, px, py, pp.w, pp.h);
+      return;
+    }
+  }
+  ctx.fillStyle = pp.activated ? '#FFC107' : '#616161';
+  ctx.fillRect(px,py,pp.w,pp.h);
+  ctx.fillStyle = pp.activated ? '#FFEB3B' : '#757575';
+  ctx.fillRect(px+2,py-2,pp.w-4,pp.h);
+  // 激活信号
+  if(pp.activated){
+    ctx.fillStyle = 'rgba(255,235,59,0.4)';
+    ctx.beginPath(); ctx.arc(px+pp.w/2, py-4, 8, 0, Math.PI*2); ctx.fill();
+  }
+}
+function drawNest(ctx){
+  if(!LEVEL.nest) return;
+  const n = LEVEL.nest, nx = n.x-CAM.x, ny = n.y-CAM.y;
+  // imgSrc 素材替换
+  if(n.imgSrc){
+    const img = loadImage(n.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, nx, ny, n.w, n.h);
+      return;
+    }
+  }
+  // 巢穴洞口
+  const grad = ctx.createRadialGradient(nx+n.w/2, ny+n.h/2, 5, nx+n.w/2, ny+n.h/2, n.w/2);
+  grad.addColorStop(0,'#3E2723'); grad.addColorStop(0.7,'#5D4037'); grad.addColorStop(1,'#795548');
+  ctx.fillStyle = grad; ctx.beginPath(); ctx.ellipse(nx+n.w/2, ny+n.h/2, n.w/2, n.h/2, 0, 0, Math.PI*2); ctx.fill();
+  // 标签
+  ctx.fillStyle = '#FFF'; ctx.font = '11px "Microsoft YaHei"'; ctx.textAlign='center';
+  ctx.fillText('巢穴', nx+n.w/2, ny-8);
+}
+function drawFridge(ctx){
+  if(!LEVEL.fridge) return;
+  const f = LEVEL.fridge, fx = f.x-CAM.x, fy = f.y-CAM.y;
+  // imgSrc 素材替换
+  if(f.imgSrc){
+    const img = loadImage(f.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, fx, fy, f.w, f.h);
+      return;
+    }
+  }
+  ctx.fillStyle = '#ECEFF1'; ctx.fillRect(fx,fy,f.w,f.h);
+  ctx.fillStyle = '#CFD8DC'; ctx.fillRect(fx,fy,f.w,6);
+  ctx.fillStyle = '#78909C'; ctx.fillRect(fx+f.w-10, fy+f.h*0.3, 6, 20); // 把手
+  // 标签
+  ctx.fillStyle = '#FFF'; ctx.font = '11px "Microsoft YaHei"'; ctx.textAlign='center';
+  ctx.fillText('冰箱', fx+f.w/2, fy-8);
+}
+function drawPlatform(ctx, p){
+  const px = p.x-CAM.x, py = p.y-CAM.y;
+  const a = p.alpha!=null ? p.alpha : 1;
+  // imgSrc 素材替换
+  if(p.imgSrc){
+    const img = loadImage(p.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.globalAlpha = a;
+      ctx.drawImage(img, px, py, p.w, p.h);
+      ctx.globalAlpha = 1;
+      return;
+    }
+  }
+  ctx.globalAlpha = a;
+  ctx.fillStyle = '#5D4037'; ctx.fillRect(px,py,p.w,p.h);
+  ctx.fillStyle = '#795548'; ctx.fillRect(px,py, p.w, 4);
+  ctx.fillStyle = '#4E342E'; ctx.fillRect(px,py+p.h-2, p.w, 2);
+  ctx.globalAlpha = 1;
+}
+
+/* ================================================================
+   洞 口 渲 染 & 碰 撞
+   ================================================================ */
+function drawWormhole(ctx, w){
+  const wx = w.x-CAM.x, wy = w.y-CAM.y;
+  // imgSrc 素材替换
+  if(w.imgSrc){
+    const img = loadImage(w.imgSrc);
+    if(img && img.complete && img.naturalWidth){
+      ctx.drawImage(img, wx, wy, w.w, w.h);
+      return;
+    }
+  }
+  // 洞口光圈动画
+  const t = performance.now()/600;
+  const r = Math.max(w.w,w.h)/2 + Math.sin(t)*4;
+  const grad = ctx.createRadialGradient(wx+w.w/2, wy+w.h/2, 2, wx+w.w/2, wy+w.h/2, r);
+  grad.addColorStop(0, '#00E5FF');
+  grad.addColorStop(0.6, '#0088FF');
+  grad.addColorStop(1, 'rgba(0,50,255,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(wx+w.w/2, wy+w.h/2, r, 0, Math.PI*2); ctx.fill();
+  // 中心小圆
+  ctx.fillStyle = '#1a1a2e';
+  ctx.beginPath(); ctx.arc(wx+w.w/2, wy+w.h/2, w.w*0.25, 0, Math.PI*2); ctx.fill();
+  // pairId 标签（调试用，正式可隐藏）
+  ctx.fillStyle = 'rgba(0,200,255,0.5)'; ctx.font='9px monospace'; ctx.textAlign='center';
+  ctx.fillText(w.pairId||'?', wx+w.w/2, wy-4);
+}
+// ===== 背景物品（无碰撞，纯装饰）=====
+function drawBgItem(ctx, b){
+  const bx = b.x-CAM.x, by = b.y-CAM.y;
+  // 渐变透明边缘
+  ctx.globalAlpha = 0.55;
+  if(b.imgSrc && b.imgSrc.startsWith('data:')){
+    if(!drawBgItem._cache) drawBgItem._cache = {};
+    let img = drawBgItem._cache[b.imgSrc];
+    if(!img){
+      img = new Image();
+      img.src = b.imgSrc;
+      drawBgItem._cache[b.imgSrc] = img;
+    }
+    if(img.complete && img.naturalWidth){
+      ctx.drawImage(img, bx, by, b.w||64, b.h||64);
+      ctx.globalAlpha = 1;
+      return;
+    }
+  }
+  // 无素材时的占位符：半透明圆角矩形
+  ctx.fillStyle = b.color || '#a0a0a0';
+  roundRect(ctx, bx, by, b.w||64, b.h||64, 6);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // 标签
+  if(b.label){
+    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font='10px "Microsoft YaHei"'; ctx.textAlign='center';
+    ctx.fillText(b.label, bx+(b.w||64)/2, by+(b.h||64)+14);
+  }
+}
+
+function checkWormholes(){
+  for(let i=0;i<(LEVEL.wormholes||[]).length;i++){
+    const w = LEVEL.wormholes[i];
+    if(!w.pairId) continue;
+    if(rectCollide(PLAYER, w)){
+      // 找到配对的洞口
+      const partner = (LEVEL.wormholes||[]).find(o=>o!==w && o.pairId===w.pairId);
+      if(partner){
+        PLAYER.x = partner.x + partner.w/2 - PLAYER.w/2;
+        PLAYER.y = partner.y - PLAYER.h;
+        PLAYER.vx = 0; PLAYER.vy = 0;
+      }
+      break; // 一次只触发一个
+    }
+  }
+}
+
+/* ================================================================
+   过 场 动 画 系 统
+   type: 'zoom' | 'bubble' | 'subtitle'
+   ================================================================ */
+function startCutscene(effectData){
+  // effectData: {type, ...params}
+  let cs = null;
+  if(effectData.type==='zoom'){
+    cs = {
+      type:'zoom',
+      timer:0,
+      duration: Math.max(0.5, effectData.duration||2),
+      // 目标区域（世界坐标）
+      tx:effectData.targetX||0, ty:effectData.targetY||0,
+      tw:effectData.targetW||200, th:effectData.targetH||200,
+      // 相机状态
+      zoomPhase: 0, // 0=放大中, 1=停留, 2=缩小中
+      holdTime: 0.4,
+    };
+  } else if(effectData.type==='bubble'){
+    cs = {
+      type:'bubble',
+      timer:0,
+      duration: Math.max(1, effectData.duration||CFG.CUTSCENE_BUBBLE_DUR),
+      icon: effectData.icon||'!',
+      text: effectData.text||'',
+    };
+  } else if(effectData.type==='subtitle'){
+    cs = {
+      type:'subtitle',
+      timer:0,
+      duration: Math.max(1, effectData.duration||CFG.CUTSCENE_SUBTITLE_DUR),
+      text: effectData.text||'',
+      // 支持图片路径（之后替换素材）
+      imgSrc: effectData.imgSrc||'',
+    };
+  }
+  if(cs) STATE.cutscene = cs;
+}
+function updateCutscene(dt){
+  const cs = STATE.cutscene;
+  if(!cs) return;
+  cs.timer += dt;
+  if(cs.type==='zoom'){
+    const half = cs.duration * 0.4;
+    const hold = cs.duration * 0.2;
+    if(cs.timer < half){ cs.zoomPhase = 0;
+    } else if(cs.timer < half+hold){ cs.zoomPhase = 1;
+    } else if(cs.timer < cs.duration){ cs.zoomPhase = 2;
+    } else {
+      // 动画结束：应用待处理效果
+      applyPendingEffects();
+      STATE.cutscene = null;
+    }
+  } else {
+    if(cs.timer >= cs.duration){
+      applyPendingEffects();
+      STATE.cutscene = null;
+    }
+  }
+}
+// 动画结束后应用压力板待处理效果
+function applyPendingEffects(){
+  // 遍历所有已激活的压力板，应用 _pendingEffects
+  for(const pp of (LEVEL.pressurePlates||[])){
+    if(!pp._pendingEffects) continue;
+    for(const eff of pp._pendingEffects){
+      const target = findObjectById(eff.targetId);
+      if(!target) continue;
+      const anim = {
+        targetId: eff.targetId, targetRef: target,
+        effect: eff.effect||'move',
+        startX: target.x, startY: target.y,
+        startW: target.w, startH: target.h,
+        startAngle: target.angle || 0,
+        endX: eff.targetX!=null ? eff.targetX : target.x,
+        endY: eff.targetY!=null ? eff.targetY : target.y,
+        endW: eff.targetW!=null ? eff.targetW : target.w,
+        endH: eff.targetH!=null ? eff.targetH : target.h,
+        endAngle: eff.targetAngle!=null ? eff.targetAngle : (target.angle||0),
+        duration: Math.max(0.2, eff.duration||1), elapsed: 0,
+        shouldRemove: eff.effect==='disappear',
+        shouldAppear: eff.effect==='appear',
+        alpha: 1,
+      };
+      if(anim.shouldAppear){ target.hidden = false; target.alpha = 0; }
+      STATE.activeEffects.push(anim);
+    }
+    delete pp._pendingEffects;
+  }
+}
+function renderCutscene(ctx){
+  const cs = STATE.cutscene;
+  if(!cs) return;
+  if(cs.type==='zoom'){
+    // 计算当前缩放和偏移
+    const half = cs.duration * 0.4;
+    const hold = cs.duration * 0.2;
+    let t=0;
+    if(cs.zoomPhase===0){
+      t = Math.min(cs.timer/half, 1);
+    } else if(cs.zoomPhase===1){
+      t = 1;
+    } else {
+      t = 1 - Math.min((cs.timer-half-hold)/(half||1), 1);
+    }
+    // easeInOut
+    const ease = t<.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2;
+    // 目标：将 cs.tx/CS.ty/cs.tw/cs.th 区域放大到充满画布
+    const pad = 40;
+    const targetScale = Math.min(CFG.CANVAS_W/(cs.tw+pad), CFG.CANVAS_H/(cs.th+pad));
+    const currentScale = 1 + (targetScale-1) * ease;
+    const cx = cs.tx + cs.tw/2 - CAM.x;
+    const cy = cs.ty + cs.th/2 - CAM.y;
+    ctx.save();
+    ctx.translate(CFG.CANVAS_W/2, CFG.CANVAS_H/2);
+    ctx.scale(currentScale, currentScale);
+    ctx.translate(-cx, -cy);
+    // 此时渲染的内容会被缩放——但我们的渲染已经在 CAM 偏移后绘制了
+    // 简化方案：在普通渲染之上覆盖一个"放大窗口"
+    ctx.restore();
+    // 实际上 zoom 效果需要用相机实现，这里用简化方案：
+    // 在画布中央显示一个放大区域（类似望远镜效果）
+    const viewW = CFG.CANVAS_W / currentScale;
+    const viewH = CFG.CANVAS_H / currentScale;
+    const vx = cx - viewW/2;
+    const vy = cy - viewH/2;
+    // 暗化背景
+    ctx.fillStyle = 'rgba(0,0,0,'+(0.5*ease)+')';
+    ctx.fillRect(0,0,CFG.CANVAS_W,CFG.CANVAS_H);
+    // 挖洞显示放大区域（用 clearRect 然后重绘该区域）
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(vx+CFG.CANVAS_W*(1-1/currentScale)/2, vy+CFG.CANVAS_H*(1-1/currentScale)/2, viewW, viewH);
+    // 简化：直接画一个发光的矩形框代表放大区域
+    ctx.strokeStyle = 'rgba(255,200,50,'+(0.8*ease)+')';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(vx+CFG.CANVAS_W*(1-1/currentScale)/2, vy+CFG.CANVAS_H*(1-1/currentScale)/2, viewW, viewH);
+    ctx.restore();
+  }
+  if(cs.type==='bubble'){
+    // 在玩家旁边画对话气泡
+    const px = PLAYER.x - CAM.x + PLAYER.w/2;
+    const py = PLAYER.y - CAM.y - 30;
+    const bw = 80, bh = 50;
+    const alpha = cs.timer<0.3 ? cs.timer/0.3 : (cs.duration-cs.timer<0.4 ? (cs.duration-cs.timer)/0.4 : 1);
+    ctx.globalAlpha = alpha;
+    // 气泡本体
+    ctx.fillStyle = '#FFF';
+    roundRect(ctx, px-bw/2, py-bh, bw, bh, 8);
+    ctx.fill();
+    // 气泡尖角
+    ctx.beginPath();
+    ctx.moveTo(px-6, py);
+    ctx.lineTo(px, py+10);
+    ctx.lineTo(px+6, py);
+    ctx.closePath(); ctx.fillStyle='#FFF'; ctx.fill();
+    // 图标
+    ctx.fillStyle = '#E53935';
+    ctx.font = 'bold 22px "Microsoft YaHei"';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(cs.icon, px, py - bh/2 + bh/2);
+    // 可选文字
+    if(cs.text){
+      ctx.fillStyle = '#333'; ctx.font='11px "Microsoft YaHei"';
+      ctx.fillText(cs.text, px, py - bh/2 + bh - 10);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if(cs.type==='subtitle'){
+    // 画面中央靠下出现字幕（图片占位符）
+    const alpha = cs.timer<0.5 ? cs.timer/0.5 : (cs.duration-cs.timer<0.5 ? (cs.duration-cs.timer)/0.5 : 1);
+    const sy = CFG.CANVAS_H - 80 + Math.sin(Math.max(0,cs.timer-0.2)*5)*3;
+    ctx.globalAlpha = alpha;
+    // 底部字幕框（图片占位：之后替换成 UI 素材）
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    roundRect(ctx, CFG.CANVAS_W/2-280, sy-18, 560, 40, 6);
+    ctx.fill();
+    // 文字（或图片占位符）
+    if(cs.imgSrc){
+      // 之后：ctx.drawImage(loadedImg, ...)
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth=1;
+      roundRect(ctx, CFG.CANVAS_W/2-280, sy-18, 560, 40, 6);
+      ctx.stroke();
+      ctx.fillStyle='#888'; ctx.font='11px monospace';
+      ctx.textAlign='center';
+      ctx.fillText('[图片: '+cs.imgSrc+']', CFG.CANVAS_W/2, sy+5);
+    } else {
+      ctx.fillStyle = '#FFF'; ctx.font='15px "Microsoft YaHei"';
+      ctx.textAlign='center';
+      ctx.fillText(cs.text, CFG.CANVAS_W/2, sy+5);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y, x+w,y+h, r);
+  ctx.arcTo(x+w,y+h, x,y+h, r);
+  ctx.arcTo(x,y+h, x,y, r);
+  ctx.arcTo(x,y, x+w,y, r);
+  ctx.closePath();
+}
+
+/* ================================================================
+   跳关 / 重生
+   ================================================================ */
+// 饥饿归零 → 在巢穴重生（不是 Game Over）
+function hungerRespawn(){
+  STATE.hunger = Math.max(30, CFG.HUNGER_MAX_START * 0.5);
+  STATE.score = Math.max(0, STATE.score - 50);
+  resetPlayer();
+}
+// 隐形传送点检测
+function checkLevelExit(){
+  if(!LEVEL.levelExit) return;
+  const ex = LEVEL.levelExit;
+  const rect = {x:ex.x, y:ex.y, w:ex.w||80, h:ex.h||60};
+  if(rectCollide(PLAYER, rect)){
+    goToNextLevel();
+  }
+}
+function goToNextLevel(){
+  const next = CFG.NEXT_LEVEL || (LEVEL._nextLevel)||'';
+  if(!next){ killPlayer('已通关！'); return; }
+  // 保存当前饱腹度（跨关继承）
+  STATE._freshStart = false; // 下一关不再是"初次开局"
+  saveLevelOriginals();
+  loadLevel(next, ()=>{
+    startGameAfterLoad();
+  });
+}
+function startGameAfterLoad(){
+  assignLevelIds();
+  saveLevelOriginals();
+  // 重置压力板踩踏状态
+  (LEVEL.pressurePlates||[]).forEach(pp=>{ pp._lastOn = false; pp.activated = false; });
+  // 饱腹度跨关继承：只在第一次开局时设满值
+  if(STATE.hunger === undefined || STATE._freshStart){
+    STATE.hunger = CFG.HUNGER_MAX_START;
+    STATE._freshStart = false;
+  }
+  resetPlayer();
+  STATE.phase = 'play';
+  STATE.activeEffects = []; STATE.biteCooldown = 0; STATE.biteAnimTimer = 0;
+  STATE.cutscene = null;
+  STATE.sprayDeath = null;
+  STATE.deathFlash = 0; STATE._overlayShown = false;
+  document.getElementById('overlay').style.display = 'none';
+  lastTime = performance.now();
+}
+
+/* ================================================================
+   渲 染 主 函 数
+   ================================================================ */
+function render(ctx){
+  ctx.clearRect(0,0,CFG.CANVAS_W,CFG.CANVAS_H);
+
+  // 背景
+  const bgGrad = ctx.createLinearGradient(0,0,0,CFG.CANVAS_H);
+  bgGrad.addColorStop(0,'#263238'); bgGrad.addColorStop(0.6,'#37474F'); bgGrad.addColorStop(1,'#1B1B1B');
+  ctx.fillStyle = bgGrad; ctx.fillRect(0,0,CFG.CANVAS_W,CFG.CANVAS_H);
+
+  // 背景图片（全局，优先级低于背景物品）
+      if(LEVEL.bgImgSrc){
+    if(!render._bgImg) render._bgImg = new Image();
+    if(render._bgImg.src !== LEVEL.bgImgSrc) render._bgImg.src = LEVEL.bgImgSrc;
+    if(render._bgImg.complete && render._bgImg.naturalWidth){
+      ctx.globalAlpha = 0.4;
+      // cover 模式：保持原比例铺满画布，多余部分裁剪居中
+      const imgW = render._bgImg.naturalWidth;
+      const imgH = render._bgImg.naturalHeight;
+      const scale = Math.max(CFG.CANVAS_W / imgW, CFG.CANVAS_H / imgH);
+      const drawW = imgW * scale;
+      const drawH = imgH * scale;
+      ctx.drawImage(render._bgImg, (CFG.CANVAS_W - drawW) / 2, (CFG.CANVAS_H - drawH) / 2, drawW, drawH);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // 背景物品（无碰撞，纯装饰，最下层）
+  for(const b of (LEVEL.bgItems||[])) drawBgItem(ctx, b);
+
+  // 平台
+  for(const p of (LEVEL.platforms||[])) drawPlatform(ctx, p);
+  // 可破坏物
+  for(const d of (LEVEL.destructibles||[])) drawDestructible(ctx, d);
+  // 可推动物
+  for(const p of (LEVEL.pushables||[])) drawPushable(ctx, p);
+  // 压力板
+  for(const pp of (LEVEL.pressurePlates||[])) drawPressurePlate(ctx, pp);
+  // 食物
+  for(const f of LEVEL.food) drawFood(ctx, f);
+  // 皮鞋
+  for(const s of (LEVEL.shoes||[])) drawShoe(ctx, s);
+  // 蟑螂药
+  for(const sp of (LEVEL.sprays||[])) drawSpray(ctx, sp);
+  // 巢穴
+  drawNest(ctx);
+  // 冰箱
+  drawFridge(ctx);
+  // 玩家
+  drawPlayer(ctx);
+
+  // === 咬技能动画（牙齿光影） ===
+  if(STATE.biteAnimTimer > 0){
+    const bx = PLAYER.facing>0 ? PLAYER.x+PLAYER.w-CAM.x : PLAYER.x-CFG.BITE_RANGE-CAM.x;
+    const by = PLAYER.y-CAM.y-6;
+    const bw = CFG.BITE_RANGE, bh = PLAYER.h+12;
+    const biteAlpha = STATE.biteAnimTimer / 0.15;
+    // 外圈闪光
+    ctx.strokeStyle = 'rgba(255,255,100,'+(0.7*biteAlpha)+')'; ctx.lineWidth=3;
+    ctx.strokeRect(bx, by, bw, bh);
+    // 牙齿锯齿线条
+    ctx.strokeStyle = 'rgba(255,200,50,'+(0.9*biteAlpha)+')'; ctx.lineWidth=2;
+    const teethCount = 4, teethW = bw/teethCount;
+    for(let i=0;i<teethCount;i++){
+      const tx = bx + i*teethW;
+      ctx.beginPath(); ctx.moveTo(tx, by+bh); ctx.lineTo(tx+teethW/2, by+bh*0.3); ctx.lineTo(tx+teethW, by+bh); ctx.stroke();
+    }
+  }
+
+  // ===== HUD =====
+  const barX=12, barY=12, barW=200, barH=16;
+  // 饱腹度条
+  ctx.fillStyle = '#333'; ctx.fillRect(barX,barY,barW,barH);
+  const hungerRatio = STATE.hunger/100;
+  const hColor = hungerRatio<0.3?'#E53935':hungerRatio<0.5?'#FF9800':hungerRatio<0.8?'#FFEB3B':'#4CAF50';
+  ctx.fillStyle = hColor; ctx.fillRect(barX,barY,barW*hungerRatio,barH);
+  ctx.strokeStyle = '#FFF'; ctx.lineWidth=1; ctx.strokeRect(barX,barY,barW,barH);
+  ctx.fillStyle = '#FFF'; ctx.font = '11px "Microsoft YaHei"'; ctx.textAlign='left';
+  ctx.fillText('饱腹度 '+Math.floor(STATE.hunger)+'%', barX+4, barY+12);
+
+  // 二段跳提示
+  if(STATE.hunger < CFG.DOUBLE_JUMP_THRESHOLD){
+    ctx.fillStyle = '#E53935'; ctx.font = '10px "Microsoft YaHei"';
+    ctx.fillText('! 无法二段跳', barX+barW+8, barY+12);
+  }
+
+  // 冰箱状态
+  ctx.fillStyle = '#FFEB3B';
+  ctx.fillText('目标: 到达冰箱即胜利！', barX, barY+44);
+
+  // 分数
+  ctx.fillStyle = '#FFF'; ctx.textAlign='right';
+  ctx.fillText('得分: '+STATE.score, CFG.CANVAS_W-12, barY+12);
+
+  // 咬冷却指示器
+  if(STATE.biteCooldown > 0){
+    ctx.fillStyle = 'rgba(255,200,50,0.7)'; ctx.font='10px "Microsoft YaHei"';
+    ctx.fillText('咬冷却中', CFG.CANVAS_W-80, barY+28);
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font='10px "Microsoft YaHei"';
+    ctx.fillText('[J] 咬', CFG.CANVAS_W-50, barY+28);
+  }
+
+  // 靠近蟑螂药时的屏幕红边效果
+  for(const sp of (LEVEL.sprays||[])){
+    const r = sp.radius||CFG.SPRAY_RADIUS;
+    const d = dist(PLAYER.x+PLAYER.w/2, PLAYER.y+PLAYER.h/2, sp.x, sp.y);
+    if(d < r){
+      const edgeAlpha = (1 - d/r) * 0.4;
+      ctx.fillStyle = 'rgba(255,0,0,'+edgeAlpha+')';
+      ctx.fillRect(0,0,CFG.CANVAS_W,20);
+      ctx.fillRect(0,CFG.CANVAS_H-20,CFG.CANVAS_W,20);
+      ctx.fillRect(0,0,20,CFG.CANVAS_H);
+      ctx.fillRect(CFG.CANVAS_W-20,0,20,CFG.CANVAS_H);
+    }
+  }
+
+  // 蟑螂药死亡动画提示
+  if(STATE.sprayDeath && STATE.sprayDeath.phase === 'eat'){
+    ctx.fillStyle = '#FF4444'; ctx.font = 'bold 20px "Microsoft YaHei"';
+    ctx.textAlign = 'center';
+    ctx.fillText('正在吃蟑螂药...', CFG.CANVAS_W/2, CFG.CANVAS_H/2 - 40);
+  }
+
+  // 洞口渲染
+  for(const w of (LEVEL.wormholes||[])) drawWormhole(ctx, w);
+
+  // 过场动画绘制（最上层）
+  renderCutscene(ctx);
+
+  // ===== 死亡红屏效果 =====
+  if(STATE.deathFlash > 0){
+    const f = STATE.deathFlash;
+    // 红色半透明覆盖
+    ctx.fillStyle = 'rgba(180,0,0,'+(f*0.55)+')';
+    ctx.fillRect(0,0,CFG.CANVAS_W,CFG.CANVAS_H);
+    // "死亡" 大字
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, f*1.5);
+    ctx.fillStyle = '#FF4444';
+    ctx.font = 'bold 56px "Microsoft YaHei"';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('死亡', CFG.CANVAS_W/2, CFG.CANVAS_H/2 - 10);
+    // 死因
+    ctx.fillStyle = 'rgba(255,200,200,0.9)';
+    ctx.font = '16px "Microsoft YaHei"';
+    ctx.fillText(STATE.deathReason, CFG.CANVAS_W/2, CFG.CANVAS_H/2 + 36);
+    ctx.restore();
+  }
+}
+
+/* ================================================================
+   游 戏 主 循 环
+   ================================================================ */
+const FIXED_DT = 1/60;
+let accumulator = 0;
+let lastTime = 0;
+const cvs = document.getElementById('cvs');
+cvs.width = CFG.CANVAS_W; cvs.height = CFG.CANVAS_H;
+const ctx = cvs.getContext('2d');
+
+function gameLoop(now){
+  requestAnimationFrame(gameLoop);
+
+  if(lastTime === 0){ lastTime = now; render(ctx); return; }
+
+  if(STATE.phase !== 'play'){
+    // 死亡阶段：衰减红屏，结束后弹出死亡遮罩
+    if(STATE.phase === 'dead' && STATE.deathFlash > 0){
+      STATE.deathFlash -= 0.022; // 约0.8秒衰减完
+      if(STATE.deathFlash <= 0 && !STATE._overlayShown){
+        STATE._overlayShown = true;
+        showOverlay(false);
+      }
+    }
+    render(ctx);
+    return;
+  }
+
+  // 固定时间步长
+  let dt = (now - lastTime)/1000;
+  if(dt > 0.1) dt = 0.1; // 防止切标签页后 delta 爆炸
+  lastTime = now;
+  accumulator += dt;
+
+  while(accumulator >= FIXED_DT){
+    update(FIXED_DT);
+    accumulator -= FIXED_DT;
+  }
+  render(ctx);
+}
+
+function update(dt){
+  // 过场动画中：冻结玩家输入，只推进动画
+  if(STATE.cutscene){
+    updateCutscene(dt);
+    // 动画期间仍检测压力板（用于连锁触发）
+    checkPressurePlates();
+    updatePressureEffects(dt);
+    return;
+  }
+
+  updateHunger(dt);
+
+  // 蟑螂药死亡动画中：禁用玩家正常控制
+  if(STATE.sprayDeath !== null){
+    updateSprayDeath(dt);
+  } else {
+    updatePlayer(dt);
+  }
+
+  // 自杀
+  if(IN.suicide){ IN.suicide=false; killPlayer('自杀'); }
+
+  // 咬技能
+  checkBite(dt);
+
+  updateEnemies(dt);
+  updatePushables(dt);
+  checkDestructibles();
+  checkPressurePlates();
+  updatePressureEffects(dt);
+  checkGoals();
+  checkWormholes();
+  checkLevelExit();
+  updateCutscene(dt);
+  updateCam(PLAYER.x);
+}
+
+/* ================================================================
+   初 始 化
+   ================================================================ */
+document.getElementById('btnStart').addEventListener('click',()=>{
+  if(location.search.includes('test')){
+    const data = localStorage.getItem('buggame_test_level');
+    if(data){
+      LEVEL = JSON.parse(data);
+      if(!LEVEL.wormholes) LEVEL.wormholes = [];
+      if(!LEVEL.bgItems) LEVEL.bgItems = [];
+      assignLevelIds();
+      startGame();
+      lastTime = performance.now();
+      requestAnimationFrame(gameLoop);
+      return;
+    }
+  }
+  loadLevel('levels/level1.json', ()=>{
+    startGame();
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+  });
+});
+document.getElementById('btnRestart').addEventListener('click', restartGame);
+
+// 编辑模式快捷入口：按 F2 打开编辑器
+document.addEventListener('keydown', e=>{
+  if(e.code==='F2'){ window.open('editor.html','_blank'); e.preventDefault(); }
+});
+</script>
+</body>
+</html>

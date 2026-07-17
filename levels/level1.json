@@ -1,0 +1,70 @@
+{
+  "platforms": [
+    {"x":0,"y":510,"w":3200,"h":30,"_id":"platform_0"},
+    {"x":200,"y":420,"w":120,"h":12,"_id":"platform_1"},
+    {"x":400,"y":360,"w":100,"h":12,"_id":"platform_2"},
+    {"x":600,"y":440,"w":160,"h":12,"_id":"platform_3"},
+    {"x":850,"y":380,"w":140,"h":12,"_id":"platform_4"},
+    {"x":1100,"y":430,"w":100,"h":12,"_id":"platform_5"},
+    {"x":1300,"y":350,"w":120,"h":12,"_id":"platform_6"},
+    {"x":1550,"y":400,"w":180,"h":12,"_id":"platform_7"},
+    {"x":1850,"y":440,"w":120,"h":12,"_id":"platform_8"},
+    {"x":2100,"y":360,"w":100,"h":12,"_id":"platform_9"},
+    {"x":2350,"y":420,"w":160,"h":12,"_id":"platform_10"},
+    {"x":2650,"y":380,"w":120,"h":12,"_id":"platform_11"},
+    {"x":2950,"y":440,"w":200,"h":12,"_id":"platform_12"},
+    {"x":3050,"y":460,"w":100,"h":12,"_id":"platform_13"}
+  ],
+  "food": [
+    {"x":220,"y":400,"_id":"food_0"},
+    {"x":440,"y":340,"_id":"food_1"},
+    {"x":640,"y":420,"_id":"food_2"},
+    {"x":900,"y":360,"_id":"food_3"},
+    {"x":1150,"y":410,"_id":"food_4"},
+    {"x":1350,"y":330,"_id":"food_5"},
+    {"x":1600,"y":380,"_id":"food_6"},
+    {"x":1900,"y":420,"_id":"food_7"},
+    {"x":2150,"y":340,"_id":"food_8"},
+    {"x":2400,"y":400,"_id":"food_9"},
+    {"x":2700,"y":360,"_id":"food_10"},
+    {"x":3000,"y":420,"_id":"food_11"},
+    {"x":3020,"y":420,"_id":"food_12"},
+    {"x":3040,"y":420,"_id":"food_13"},
+    {"x":3080,"y":440,"_id":"food_14"}
+  ],
+  "shoes": [
+    {"x":750,"y":478,"w":48,"h":32,"patrolL":650,"patrolR":950,"_id":"shoe_0"},
+    {"x":1700,"y":478,"w":48,"h":32,"patrolL":1600,"patrolR":1900,"_id":"shoe_1"},
+    {"x":2500,"y":478,"w":48,"h":32,"patrolL":2400,"patrolR":2700,"_id":"shoe_2"}
+  ],
+  "sprays": [
+    {"x":1400,"y":510,"radius":120,"_id":"spray_0"},
+    {"x":2200,"y":510,"radius":150,"_id":"spray_1"}
+  ],
+  "pushables": [
+    {"x":600,"y":478,"w":32,"h":32,"_id":"pushable_0"},
+    {"x":1850,"y":478,"w":32,"h":32,"_id":"pushable_1"}
+  ],
+  "destructibles": [
+    {"x":2800,"y":478,"w":32,"h":32,"_id":"destructible_0"},
+    {"x":2832,"y":478,"w":32,"h":32,"_id":"destructible_1"},
+    {"x":2864,"y":478,"w":32,"h":32,"_id":"destructible_2"}
+  ],
+  "pressurePlates": [
+    {
+      "x":1200,"y":498,"w":48,"h":12,"_id":"pressure_0",
+      "effects": [
+        {"targetId":"destructible_0","effect":"disappear","duration":0.8},
+        {"targetId":"platform_12","effect":"move","targetX":2950,"targetY":320,"duration":2}
+      ]
+    }
+  ],
+  "wormholes": [
+    {"x":1000,"y":478,"w":32,"h":40,"pairId":"A","_id":"wormhole_0"},
+    {"x":2000,"y":478,"w":32,"h":40,"pairId":"A","_id":"wormhole_1"}
+  ],
+  "nest": {"x":60,"y":470,"w":40,"h":40,"_id":"nest"},
+  "fridge": {"x":3080,"y":430,"w":56,"h":80,"_id":"fridge"},
+  "playerStart": {"x":60,"y":430},
+  "levelExit": {"x":3000,"y":480,"w":80,"h":60}
+}
