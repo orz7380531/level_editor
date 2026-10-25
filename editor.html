@@ -28,6 +28,9 @@ html,body{background:#1a1a2e;color:#e0e0e0;font-family:'Microsoft YaHei',sans-se
 /* 中央画布 */
 #canvasWrap{flex:1;overflow:hidden;background:#1a1a2e;position:relative}
 #editorCanvas{display:block;image-rendering:pixelated}
+#dropHint{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(20,60,40,.85);color:#7CFFB2;font-size:18px;font-weight:bold;pointer-events:none;z-index:5}
+#canvasWrap.dragging #dropHint{display:flex}
 canvas#gridCanvas{position:absolute;top:0;left:0}
 
 /* 右键面板 */
@@ -89,9 +92,9 @@ canvas#gridCanvas{position:absolute;top:0;left:0}
   <label>吸附: <input type="checkbox" id="chkSnap" checked></label>
   <label>吸附大小: <input type="number" id="snapSize" value="16" min="4" max="64" style="width:50px"></label>
   <button id="btnNew" style="background:#555;border-color:#666">新建空白关卡</button>
-  <button id="btnExport">导出 JSON</button>
-  <button id="btnImport">导入 JSON</button>
-  <button id="btnSave">保存为关卡文件</button>
+  <button id="btnExport" style="background:#8e44ad;border-color:#9b59b6">导出关卡文件</button>
+  <button id="btnImport">导入关卡文件</button>
+  <button id="btnSave">另存 JSON 备份</button>
   <button id="btnTest" style="background:#27ae60;border-color:#2ecc71">在游戏中测试</button>
 </div>
 
@@ -156,10 +159,14 @@ canvas#gridCanvas{position:absolute;top:0;left:0}
       Ctrl+C / Ctrl+V=复制粘贴<br>
       Ctrl+Z=撤销
     </p>
+    <p style="font-size:10px;color:#7CFFB2;line-height:1.6;margin-top:6px">
+      小提示：关卡文件（.json / .js）<br>可以直接拖进画布导入
+    </p>
   </div>
 
   <div id="canvasWrap">
     <canvas id="gridCanvas"></canvas>
+    <div id="dropHint">松开鼠标即可导入关卡文件</div>
   </div>
 
   <div id="rightPanel">
@@ -238,6 +245,14 @@ let editorBgImgSrc = '';  // 全局背景图 data URL
 // 物体 ID 计数器（为每个物体生成唯一 ID，用于压力板效果引用）
 let objIdCounter = 0;
 function nextObjId(type){ return type+'_'+ (objIdCounter++); }
+
+// 当前编辑的关卡名（导出文件名、跳关都用它）
+let currentLevelName = 'level1';
+// 本关通关后要跳到的下一关名（空=最后一关）
+let currentNextLevel = '';
+// 改关卡名 / 下一关名（不重建面板，避免输入框失去焦点）
+function setLevelName(v){ currentLevelName = String(v||'').trim() || 'level1'; }
+function setNextLevel(v){ currentNextLevel = String(v||'').trim(); }
 
 // 获取所有可被引用的物体列表（用于压力板目标下拉）
 function getAllTargetableObjects(){
@@ -945,8 +960,14 @@ function redo(){
 }
 
 // ===== 导出 / 导入 =====
-function exportLevel(){
-  const data = { platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[], pressurePlates:[], wormholes:[], bgItems:[], nest:null, fridge:null, playerStart:null, levelExit:null, bgImgSrc:'' };
+/* 把画布上的物体打包成关卡数据（导出 / 另存 / 测试 三处共用） */
+function buildLevelData(){
+  const data = {
+    platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[],
+    pressurePlates:[], wormholes:[], bgItems:[],
+    nest:null, fridge:null, playerStart:null, levelExit:null, bgImgSrc:'',
+    nextLevel: currentNextLevel || ''   // 走到传送点后要跳去的关卡名
+  };
   for(const o of objects){
     switch(o.type){
     case 'platform': data.platforms.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
@@ -965,19 +986,87 @@ function exportLevel(){
   }
   // 保存全局背景图（直接用变量，不依赖 DOM）
   if(editorBgImgSrc) data.bgImgSrc = editorBgImgSrc;
-  const json = JSON.stringify(data,null,2);
-  // 复制到剪贴板
-  navigator.clipboard.writeText(json).then(()=>alert('JSON 已复制到剪贴板！\n\n可直接粘贴保存为 .json 文件')).catch(()=>{});
-  // 也弹出查看
-  const w=window.open('','_blank','width=500,height=400');
-  w.document.write('<pre style="font-size:11px">'+json.replace(/</g,'&lt;')+'</pre>');
+  // 出生点保护：没放巢穴时给个默认位置，避免游戏里读空值崩溃
+  if(!data.playerStart) data.playerStart = {x:60, y:LH-140};
+  return data;
 }
+// 下载文件（浏览器会直接保存到下载目录）
+function downloadFile(fileName, text, mimeType){
+  const blob = new Blob([text],{type: mimeType||'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 500);
+}
+/* 导出为关卡文件（.js）：游戏双击打开也能读到，放进 levels/ 目录即可 */
+function exportLevel(){
+  const data = buildLevelData();
+  const js = '/* 关卡文件：'+currentLevelName+' — 由关卡编辑器导出 */\n'
+    + '(function(g){ g.LEVELS = g.LEVELS || {}; g.LEVELS[\''+currentLevelName+'\'] = '
+    + JSON.stringify(data,null,2) + '; })(window);\n';
+  downloadFile(currentLevelName+'.js', js, 'application/javascript');
+  alert('已导出 '+currentLevelName+'.js\n\n把它放进 levels/ 目录，游戏就能读到这一关了。'
+    + (data.nextLevel ? '\n\n本关传送点将跳到：'+data.nextLevel : '\n\n（未设置下一关，走到传送点会判定通关）'));
+}
+/* 导入关卡：弹出系统文件选择框，直接选中 .json 或 .js 关卡文件 */
 function importLevel(){
-  const input = prompt('粘贴关卡 JSON 数据：');
-  if(!input) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.js';
+  input.onchange = function(){
+    const f = input.files && input.files[0];
+    if(!f) return;
+    const reader = new FileReader();
+    reader.onload = function(){ applyLevelText(String(reader.result), f.name); };
+    reader.onerror = function(){ alert('读取文件失败，请重试'); };
+    reader.readAsText(f, 'utf-8');
+  };
+  input.click();
+}
+/* 从文本里解析出关卡数据对象（.json 纯数据 / .js 关卡文件 两种都支持） */
+function parseLevelText(raw){
+  // 情况1：纯 JSON 文件
+  if(raw.startsWith('{')) return JSON.parse(raw);
+  // 情况2：.js 关卡文件，格式是 (function(g){ g.LEVELS['level1'] = {数据}; })(window);
+  //   注意不能直接用 indexOf('{')，那会命中 (function(g){ 的花括号，必须定位到赋值号后面的那个
+  const marker = raw.search(/g\.LEVELS\s*\[[^\]]*\]\s*=\s*/);
+  const s = marker >= 0 ? raw.indexOf('{', marker) : raw.indexOf('{');
+  if(s < 0) throw new Error('文件里找不到关卡数据');
+  // 用大括号配对扫描找到数据结束位置（要跳过字符串内部的括号，背景图 dataURL 里可能有）
+  let depth = 0, inStr = false, esc = false;
+  for(let i = s; i < raw.length; i++){
+    const c = raw[i];
+    if(inStr){
+      if(esc) esc = false;
+      else if(c === '\\') esc = true;
+      else if(c === '"') inStr = false;
+      continue;
+    }
+    if(c === '"'){ inStr = true; continue; }
+    if(c === '{') depth++;
+    else if(c === '}'){
+      depth--;
+      if(depth === 0) return JSON.parse(raw.slice(s, i + 1));
+    }
+  }
+  throw new Error('关卡数据不完整（大括号没配对）');
+}
+/* 解析关卡文件内容并载入编辑器 */
+function applyLevelText(text, fileName){
   try{
+    const raw = String(text||'').trim();
+    if(!raw) throw new Error('文件是空的');
+    const data = parseLevelText(raw);
     pushUndo();
-    const data = JSON.parse(input);
+    // 用文件名推断本关关卡名（例如 level2.js → level2）
+    if(fileName){
+      const m = String(fileName).match(/([A-Za-z0-9_\-]+)\.(js|json)$/i);
+      if(m){ currentLevelName = m[1]; renderConfigTab(); }
+    }
+    // 读取"跳到下一关"设置
+    currentNextLevel = data.nextLevel || '';
     objects = [];
     (data.platforms||[]).forEach(p=>addObj('platform',p.x,p.y,p.w,p.h,{_id:p._id,imgSrc:p.imgSrc||''}));
     (data.food||[]).forEach(f=>addObj('food',f.x,f.y,12,12,{_id:f._id,imgSrc:f.imgSrc||''}));
@@ -991,40 +1080,19 @@ function importLevel(){
     if(data.levelExit) addObj('levelexit', data.levelExit.x, data.levelExit.y, data.levelExit.w||80, data.levelExit.h||60);
     if(data.nest) addObj('nest', data.nest.x, data.nest.y, data.nest.w||40, data.nest.h||40,{_id:data.nest._id,imgSrc:data.nest.imgSrc||''});
     if(data.fridge) addObj('fridge', data.fridge.x, data.fridge.y, data.fridge.w||56, data.fridge.h||80,{_id:data.fridge._id,imgSrc:data.fridge.imgSrc||''});
-    // 加载全局背景图
-    if(data.bgImgSrc){ editorBgImgSrc = data.bgImgSrc; }
+    // 加载全局背景图（新关卡没背景图就清掉旧的，避免残留）
+    editorBgImgSrc = data.bgImgSrc || '';
+    if(render._bgImg) render._bgImg = null;
     selectedIdx=-1;
     render(); updateProps();
     alert('导入成功！共 '+objects.length+' 个物体。');
   }catch(e){ alert('解析失败: '+e.message); }
 }
+/* 另存为 JSON 备份（纯数据，方便分享/备份，导入时也能选它） */
 function saveLevel(){
-  const data = { platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[], pressurePlates:[], wormholes:[], bgItems:[], nest:null, fridge:null, playerStart:null, levelExit:null, bgImgSrc:'' };
-  for(const o of objects){
-    switch(o.type){
-    case 'platform': data.platforms.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'food': data.food.push({x:o.x,y:o.y,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'shoe': data.shoes.push({x:o.x,y:o.y,w:o.w,h:o.h,patrolL:o.patrolL,patrolR:o.patrolR,keyframes:o.keyframes||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'spray': data.sprays.push({x:o.x,y:o.y,radius:o.radius||120,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'pushable': data.pushables.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'destructible': data.destructibles.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'pressure': data.pressurePlates.push({x:o.x,y:o.y,w:o.w,h:o.h,effects:o.effects||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'wormhole': data.wormholes.push({x:o.x,y:o.y,w:o.w,h:o.h,pairId:o.pairId||'',_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'bgitem': data.bgItems.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||'',label:o.label||''}); break;
-    case 'levelexit': data.levelExit={x:o.x,y:o.y,w:o.w,h:o.h}; break;
-    case 'nest': data.nest={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; data.playerStart={x:o.x, y:o.y-40}; break;
-    case 'fridge': data.fridge={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; break;
-    }
-  }
-  // 保存全局背景图（直接用变量）
-  if(editorBgImgSrc) data.bgImgSrc = editorBgImgSrc;
-  const json = JSON.stringify(data,null,2);
-  const blob = new Blob([json],{type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'level1.json';
-  a.click();
-  alert('文件已下载为 level1.json，放入 levels/ 目录即可替换默认关卡。');
+  const data = buildLevelData();
+  downloadFile(currentLevelName+'.json', JSON.stringify(data,null,2), 'application/json');
+  alert('已保存为 '+currentLevelName+'.json（备份文件，导入时可直接选它）。');
 }
 
 // ===== 事件处理 =====
@@ -1189,29 +1257,39 @@ document.getElementById('btnLayerDown').addEventListener('click',()=>{
   render(); updateProps();
 });
 document.getElementById('btnTest').addEventListener('click',()=>{
-  // 保存当前关卡，然后打开游戏
-  const data = { platforms:[], food:[], shoes:[], sprays:[], pushables:[], destructibles:[], pressurePlates:[], wormholes:[], bgItems:[], nest:null, fridge:null, playerStart:null, levelExit:null };
-  for(const o of objects){
-    switch(o.type){
-    case 'platform': data.platforms.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'food': data.food.push({x:o.x,y:o.y,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'shoe': data.shoes.push({x:o.x,y:o.y,w:o.w,h:o.h,patrolL:o.patrolL,patrolR:o.patrolR,keyframes:o.keyframes||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'spray': data.sprays.push({x:o.x,y:o.y,radius:o.radius||120,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'pushable': data.pushables.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'destructible': data.destructibles.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'pressure': data.pressurePlates.push({x:o.x,y:o.y,w:o.w,h:o.h,effects:o.effects||[],_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'wormhole': data.wormholes.push({x:o.x,y:o.y,w:o.w,h:o.h,pairId:o.pairId||'',_id:o._id,imgSrc:o.imgSrc||''}); break;
-    case 'bgitem': data.bgItems.push({x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||'',label:o.label||''}); break;
-    case 'levelexit': data.levelExit={x:o.x,y:o.y,w:o.w,h:o.h}; break;
-    case 'nest': data.nest={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; data.playerStart={x:o.x,y:o.y-40}; break;
-    case 'fridge': data.fridge={x:o.x,y:o.y,w:o.w,h:o.h,_id:o._id,imgSrc:o.imgSrc||''}; break;
-    }
+  // 把当前关卡存起来，然后在同一个窗口打开游戏（同窗口跳转不会被弹窗拦截）
+  const data = buildLevelData();
+  try{
+    localStorage.setItem('buggame_test_level', JSON.stringify(data));
+  }catch(err){
+    alert('保存测试关卡失败（可能是浏览器禁用了本地存储）\n' + err.message);
+    return;
   }
-  // 保存全局背景图（直接用变量）
-  if(editorBgImgSrc) data.bgImgSrc = editorBgImgSrc;
-  localStorage.setItem('buggame_test_level', JSON.stringify(data));
-  window.open('index.html?test','_blank');
+  location.href = 'index.html?test';
 });
+
+// 拖拽导入：把 .json / .js 关卡文件直接拖进画布
+(function(){
+  const wrap = document.getElementById('canvasWrap');
+  if(!wrap) return;
+  wrap.addEventListener('dragover', e=>{
+    e.preventDefault();
+    wrap.classList.add('dragging');
+  });
+  wrap.addEventListener('dragleave', e=>{
+    if(e.target === wrap) wrap.classList.remove('dragging');
+  });
+  wrap.addEventListener('drop', e=>{
+    e.preventDefault();
+    wrap.classList.remove('dragging');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if(!f) return;
+    const reader = new FileReader();
+    reader.onload = function(){ applyLevelText(String(reader.result), f.name); };
+    reader.onerror = function(){ alert('读取文件失败，请重试'); };
+    reader.readAsText(f, 'utf-8');
+  });
+})();
 
 // 新建空白关卡：清空所有物体，回到初始空白状态
 document.getElementById('btnNew').addEventListener('click',()=>{
@@ -1252,8 +1330,8 @@ const gameCfg = JSON.parse(JSON.stringify({
   CUTSCENE_ZOOM_SPEED: 2.5, CUTSCENE_BUBBLE_DUR: 2.0, CUTSCENE_SUBTITLE_DUR: 3.0,
   // 洞口尺寸
   WORMHOLE_W: 32, WORMHOLE_H: 40,
-  // 下一关文件名
-  NEXT_LEVEL: '',
+  // 下一关关卡名（关卡里没设 nextLevel 时才用它兜底）
+  NEXT_LEVEL: 'level2',
   KEY_LEFT: 'A / Left', KEY_RIGHT: 'D / Right', KEY_JUMP: 'W / Up / Space',
   KEY_BITE: 'J', KEY_SUICIDE: 'K'
 }));
@@ -1316,6 +1394,21 @@ function renderConfigTab(){
   const container = document.getElementById('tabConfig');
   let h = '';
 
+  // 关卡信息（导出文件名 + 传送点跳到哪一关）
+  h += '<h4>关卡信息</h4>';
+  h += '<div style="margin:6px 0 10px">'+
+    '<label style="font-size:11px;color:#888;display:block;margin-bottom:2px">本关名称（导出文件名）</label>'+
+    '<input type="text" value="'+currentLevelName+'" oninput="setLevelName(this.value)" '+
+    'style="width:100%;padding:4px 6px;background:#16213e;color:#eee;border:1px solid #0f3460;border-radius:3px">'+
+    '</div>';
+  h += '<div style="margin:6px 0 10px">'+
+    '<label style="font-size:11px;color:#888;display:block;margin-bottom:2px">传送点跳到下一关（关卡名，留空=通关）</label>'+
+    '<input type="text" value="'+currentNextLevel+'" placeholder="例如 level2" oninput="setNextLevel(this.value)" '+
+    'style="width:100%;padding:4px 6px;background:#16213e;color:#eee;border:1px solid #0f3460;border-radius:3px">'+
+    '</div>';
+  h += '<div style="font-size:10px;color:#666;margin:4px 0 10px;padding:4px 8px;background:#1a1a2e;border-radius:3px">'+
+    '流程：画好关卡 → 导出得到 <b>'+currentLevelName+'.js</b> → 放进 <b>levels/</b> 文件夹 → 游戏里走到传送点就跳下一关</div>';
+
   // 跳跃系统
   h += '<h4>跳跃系统</h4>';
   h += cfgRange('饱腹满时跳跃力', 'JUMP_VEL_FULL', -700, -100, 10, '（负值，越小跳越高）');
@@ -1375,10 +1468,12 @@ function renderConfigTab(){
 
   // 关卡链接
   h += '<h4>关卡链接</h4>';
-  h += '<div class="cfg-row"><span class="cfg-label" title="NEXT_LEVEL">下一关文件</span>'+
-    '<input type="text" value="'+(gameCfg.NEXT_LEVEL||'')+'" placeholder="levels/level2.json" '+
+  h += '<div class="cfg-row"><span class="cfg-label" title="NEXT_LEVEL">兜底下一关</span>'+
+    '<input type="text" value="'+(gameCfg.NEXT_LEVEL||'')+'" placeholder="例如 level2" '+
     'style="flex:1;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;padding:3px 6px;border-radius:3px" '+
     'oninput="gameCfg.NEXT_LEVEL=this.value"></div>';
+  h += '<div style="font-size:10px;color:#666;margin:2px 0 8px;padding:4px 8px;background:#1a1a2e;border-radius:3px">'+
+    '优先用「关卡信息」里填的下一关名；这里只在关卡没填时兜底。</div>';
 
   // 背景图片
   h += '<h4>背景图片（全局）</h4>';
