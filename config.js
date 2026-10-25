@@ -79,7 +79,7 @@ const CFG = {
   /* ───────── 关卡 ───────── */
   LEVEL_W: 960,           // 单屏16:9，无横向滚动
   // 多关卡：每关一屏 960×540，下一关文件名
-  NEXT_LEVEL: 'levels/level2.json', // 空='' 表示最后一关
+  NEXT_LEVEL: 'level2',   // 下一关的关卡名（对应 levels/level2.js），空='' 表示最后一关
 
   /* ───────── 咬技能 ───────── */
   KEY_BITE: 'KeyJ',       // 咬键：J

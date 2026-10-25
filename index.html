@@ -57,7 +57,10 @@
       WASD / 方向键 = 移动跳跃 &nbsp;|&nbsp;
       空格 = 跳跃（按住跳更高） &nbsp;|&nbsp;
       J = 咬食物/破坏障碍物<br>
-      K = 自杀重来
+      K = 自杀重来 &nbsp;|&nbsp; F2 = 回到编辑器
+    </div>
+    <div id="testTip" style="display:none;margin-top:10px;font-size:13px;color:#7CFFB2">
+      测试模式：正在试玩编辑器里的关卡（按浏览器后退可回到编辑器）
     </div>
   </div>
 
@@ -94,7 +97,7 @@ const CFG = {
   PRESSURE_W: 48, PRESSURE_H: 12,
   NEST_W: 40, NEST_H: 40, FRIDGE_W: 56, FRIDGE_H: 80,
   LEVEL_W: 960,          // 单屏16:9，无横向滚动
-  NEXT_LEVEL: 'levels/level2.json', // 下一关文件名，空='' 表示最后一关
+  NEXT_LEVEL: 'level2',      // 下一关的关卡名（对应 levels/level2.js），空='' 表示最后一关
   /* ── 咬技能 ── */
   KEY_BITE: 'KeyJ', BITE_RANGE: 40, BITE_COOLDOWN: 0.25,
   /* ── 过场动画 ── */
@@ -180,7 +183,7 @@ const STATE = {
   // 洞口传送
   wormholes: [],     // 当前关卡的洞口列表（从关卡数据加载）
   // 多关卡
-  currentLevel: 'levels/level1.json',
+  currentLevel: 'level1',
   // 咬技能
   biteCooldown: 0,      // 咬冷却计时器
   biteAnimTimer: 0,     // 咬动画计时器（>0时显示咬特效）
@@ -193,20 +196,62 @@ const STATE = {
 /* ================================================================
    关 卡 数 据
    ================================================================ */
-// 加载外部关卡 JSON；失败就用内置默认关卡
+// 关卡注册表：levels/*.js 会调用 registerLevel 把自己登记进来
+// 用 <script> 标签加载而不是 fetch，这样双击打开（file:// 协议）也能读到关卡
+window.LEVELS = window.LEVELS || {};
+// 从路径里提取关卡名：'levels/level1.json' / 'level1' → 'level1'
+function levelNameOf(pathOrName){
+  let n = String(pathOrName || '');
+  n = n.replace(/\.json$/i,'').replace(/^.*[\\\/]/,'');
+  return n;
+}
+// 用动态 script 标签加载关卡文件（file:// 下可用，fetch 在 file:// 下会被浏览器拦截）
+function loadLevelScript(name, cb){
+  if(window.LEVELS[name]){ cb(true); return; }
+  const s = document.createElement('script');
+  s.src = 'levels/' + name + '.js';
+  s.onload = function(){ cb(!!window.LEVELS[name]); };
+  s.onerror = function(){ cb(false); };
+  document.head.appendChild(s);
+}
+// 补齐关卡缺失字段，避免自定义关卡少字段时崩溃
+// 深拷贝一份再返回：游戏里吃掉食物/破坏箱子会直接改 LEVEL，
+// 如果直接引用注册表里的对象，重玩或跳关回来时关卡就已经被上一局改坏了
+function normalizeLevel(L){
+  try{ L = JSON.parse(JSON.stringify(L)); }catch(e){ /* 拷贝失败就用原对象 */ }
+  if(!L.wormholes) L.wormholes = [];
+  if(!L.bgItems) L.bgItems = [];
+  if(!L.platforms) L.platforms = [];
+  if(!L.food) L.food = [];
+  if(!L.shoes) L.shoes = [];
+  if(!L.sprays) L.sprays = [];
+  if(!L.pushables) L.pushables = [];
+  if(!L.destructibles) L.destructibles = [];
+  if(!L.pressurePlates) L.pressurePlates = [];
+  return L;
+}
+// 按关卡名加载关卡；都读不到就用内置默认关卡
 let LEVEL = null;
-function loadLevel(path, cb){
-  fetch(path).then(r=>r.json()).then(l=>{
-    LEVEL = l;
-    // 兼容旧格式：没有的字段补空
-    if(!LEVEL.wormholes) LEVEL.wormholes = [];
-    if(!LEVEL.bgItems) LEVEL.bgItems = [];
-    assignLevelIds();
-    cb();
-  }).catch(()=>{
-    LEVEL = getDefaultLevel();
-    assignLevelIds();
-    cb();
+function loadLevel(pathOrName, cb){
+  const name = levelNameOf(pathOrName);
+  if(!name){ LEVEL = getDefaultLevel(); assignLevelIds(); cb(); return; }
+  loadLevelScript(name, function(ok){
+    if(ok){
+      LEVEL = normalizeLevel(window.LEVELS[name]);
+      assignLevelIds();
+      cb();
+      return;
+    }
+    // 兜底：用 http 部署时的 fetch 方式再试一次（file:// 下会失败，属正常）
+    fetch('levels/' + name + '.json').then(r=>r.json()).then(l=>{
+      LEVEL = normalizeLevel(l);
+      assignLevelIds();
+      cb();
+    }).catch(()=>{
+      LEVEL = getDefaultLevel();
+      assignLevelIds();
+      cb();
+    });
   });
 }
 function getDefaultLevel(){
@@ -273,7 +318,8 @@ const PLAYER = {
 };
 
 function resetPlayer(){
-  const s = LEVEL.playerStart;
+  // 出生点保护：关卡没放巢穴时，默认出生在画布左侧靠下，避免空值崩溃
+  const s = LEVEL.playerStart || {x: 60, y: CFG.CANVAS_H - 140};
   PLAYER.x = s.x; PLAYER.y = s.y;
   PLAYER.vx = 0; PLAYER.vy = 0;
   PLAYER.grounded = false; PLAYER.doubleJumped = false;
@@ -902,10 +948,18 @@ function showOverlay(won){
   }
 }
 function saveLevelOriginals(){
+  // 数组保护：缺失的字段补空数组，避免自定义关卡缺字段时崩溃
+  if(!LEVEL.food) LEVEL.food = [];
+  if(!LEVEL.destructibles) LEVEL.destructibles = [];
+  if(!LEVEL.pushables) LEVEL.pushables = [];
+  if(!LEVEL.shoes) LEVEL.shoes = [];
+  if(!LEVEL.platforms) LEVEL.platforms = [];
+  if(!LEVEL.sprays) LEVEL.sprays = [];
+  if(!LEVEL.pressurePlates) LEVEL.pressurePlates = [];
   LEVEL._origFood = JSON.parse(JSON.stringify(LEVEL.food));
-  LEVEL._origDestructibles = JSON.parse(JSON.stringify(LEVEL.destructibles||[]));
-  LEVEL._origPushables = JSON.parse(JSON.stringify(LEVEL.pushables||[]));
-  LEVEL._origShoes = JSON.parse(JSON.stringify(LEVEL.shoes||[]));
+  LEVEL._origDestructibles = JSON.parse(JSON.stringify(LEVEL.destructibles));
+  LEVEL._origPushables = JSON.parse(JSON.stringify(LEVEL.pushables));
+  LEVEL._origShoes = JSON.parse(JSON.stringify(LEVEL.shoes));
 }
 function restoreLevelOriginals(){
   if(LEVEL._origFood) LEVEL.food = JSON.parse(JSON.stringify(LEVEL._origFood));
@@ -1424,7 +1478,7 @@ function hungerRespawn(){
 }
 // 隐形传送点检测
 function checkLevelExit(){
-  if(!LEVEL.levelExit) return;
+  if(!LEVEL.levelExit || LEVEL._exiting) return;
   const ex = LEVEL.levelExit;
   const rect = {x:ex.x, y:ex.y, w:ex.w||80, h:ex.h||60};
   if(rectCollide(PLAYER, rect)){
@@ -1432,12 +1486,15 @@ function checkLevelExit(){
   }
 }
 function goToNextLevel(){
-  const next = CFG.NEXT_LEVEL || (LEVEL._nextLevel)||'';
+  // 优先用本关传送点自己指定的下一关名，其次用全局配置
+  const next = LEVEL.nextLevel || LEVEL._nextLevel || CFG.NEXT_LEVEL || '';
   if(!next){ killPlayer('已通关！'); return; }
+  // 防止同一个传送点反复触发
+  LEVEL._exiting = true;
   // 保存当前饱腹度（跨关继承）
   STATE._freshStart = false; // 下一关不再是"初次开局"
-  saveLevelOriginals();
   loadLevel(next, ()=>{
+    LEVEL._exiting = false;
     startGameAfterLoad();
   });
 }
@@ -1694,21 +1751,30 @@ function update(dt){
 /* ================================================================
    初 始 化
    ================================================================ */
+// 测试模式提示（从编辑器跳转过来时显示）
+if(location.search.includes('test')){
+  const tip = document.getElementById('testTip');
+  if(tip) tip.style.display = 'block';
+}
+
 document.getElementById('btnStart').addEventListener('click',()=>{
+  // 测试模式：从编辑器带过来的关卡（localStorage）
   if(location.search.includes('test')){
     const data = localStorage.getItem('buggame_test_level');
     if(data){
-      LEVEL = JSON.parse(data);
-      if(!LEVEL.wormholes) LEVEL.wormholes = [];
-      if(!LEVEL.bgItems) LEVEL.bgItems = [];
-      assignLevelIds();
-      startGame();
-      lastTime = performance.now();
-      requestAnimationFrame(gameLoop);
-      return;
+      try{
+        LEVEL = normalizeLevel(JSON.parse(data));
+        assignLevelIds();
+        startGame();
+        lastTime = performance.now();
+        requestAnimationFrame(gameLoop);
+        return;
+      }catch(err){
+        console.error('测试关卡数据有问题，改用第1关', err);
+      }
     }
   }
-  loadLevel('levels/level1.json', ()=>{
+  loadLevel('level1', ()=>{
     startGame();
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
